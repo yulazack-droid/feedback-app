@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import qrcode from 'qrcode-generator';
 import {
+  BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, LineChart, Line, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
+} from 'recharts';
+import {
   insertLectureFeedback, insertFinalFeedback, insertProjectFeedback,
   fetchLectureFeedback, fetchFinalFeedback, fetchProjectFeedback,
 } from './supabase.js';
@@ -80,6 +84,15 @@ const STYLES = `
   .bar-track { height: 22px; background: var(--cream-2); border: 1.5px solid var(--ink); position: relative; overflow: hidden; }
   .bar-fill  { height: 100%; background: var(--ink); transition: width 0.4s ease; }
   .quote-card { border-left: 4px solid var(--accent); padding: 8px 14px; margin-bottom: 10px; background: var(--cream); }
+  .insight-card { border: 1.5px solid var(--ink); padding: 14px 16px; background: var(--cream-2); margin-bottom: 10px; position: relative; }
+  .insight-card::before { content: '💡'; position: absolute; top: -10px; left: 14px; background: var(--cream); padding: 0 6px; font-size: 16px; }
+  .insight-card .label { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-soft); font-weight: 700; }
+  .insight-card .text { font-size: 14px; margin-top: 4px; line-height: 1.5; }
+  .chart-card { background: var(--cream); border: 1.5px solid var(--ink); padding: 16px 8px 8px; margin-bottom: 12px; }
+  .chart-title { font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--ink-soft); font-weight: 500; padding: 0 8px 8px; }
+  .heatmap-cell { border: 1px solid var(--ink); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+  .legend-row { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; margin-top: 8px; }
+  .legend-dot { display: inline-block; width: 10px; height: 10px; margin-inline-end: 6px; vertical-align: middle; }
   .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
   .lec-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 14px 0; border-bottom: 1.5px dashed var(--ink); }
   .lec-row:last-child { border-bottom: none; }
@@ -700,6 +713,199 @@ function FinalPage() {
   );
 }
 
+// ============================================================
+// ANALYTICS HELPERS
+// ============================================================
+const CHART_COLORS = ['#1a1715', '#c8553d', '#588157', '#1e90ff', '#b08968', '#4a423c'];
+const RATING_COLORS = { 1: '#c8553d', 2: '#b08968', 3: '#4a423c', 4: '#588157', 5: '#1e90ff' };
+
+// Custom tooltip in newsprint style
+function NewsprintTooltip({ active, payload, label }) {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div style={{ background: '#f4ede1', border: '1.5px solid #1a1715', padding: '8px 12px', fontSize: 13 }}>
+      {label && <div style={{ fontWeight: 700, marginBottom: 4 }}>{label}</div>}
+      {payload.map((p, i) => (
+        <div key={i} style={{ color: p.color || '#1a1715' }}>
+          {p.name}: {typeof p.value === 'number' ? p.value.toFixed?.(2) || p.value : p.value}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Compute analytics for a single lecture
+function analyzeLecture(submissions, lectureId) {
+  const subs = submissions.filter(s => s.lecture_id === lectureId);
+  if (!subs.length) return null;
+
+  // Emoji distribution
+  const emojiDist = [1,2,3,4,5].map(v => ({
+    rating: v,
+    label: ['😴 Lost', '😐 Okay', '🙂 Nice', '🤩 Loved', '🔥 Highlight'][v-1],
+    count: subs.filter(s => s.rating === v).length,
+  }));
+
+  // Average + std dev (consistency)
+  const ratings = subs.map(s => s.rating);
+  const avg = ratings.reduce((a,b) => a+b, 0) / ratings.length;
+  const variance = ratings.reduce((a,r) => a + (r-avg)**2, 0) / ratings.length;
+  const stdDev = Math.sqrt(variance);
+
+  // By role
+  const byRole = {};
+  for (const s of subs) {
+    const r = s.role || 'Unknown';
+    if (!byRole[r]) byRole[r] = { count: 0, sum: 0, ratings: [] };
+    byRole[r].count++; byRole[r].sum += s.rating; byRole[r].ratings.push(s.rating);
+  }
+  const roleChart = Object.entries(byRole).map(([role, v]) => ({
+    role: role.length > 14 ? role.slice(0, 12) + '…' : role,
+    avg: +(v.sum / v.count).toFixed(2),
+    count: v.count,
+  })).sort((a,b) => b.avg - a.avg);
+
+  // By seniority
+  const bySeniority = {};
+  for (const s of subs) {
+    const r = s.seniority || 'Unknown';
+    if (!bySeniority[r]) bySeniority[r] = { count: 0, sum: 0 };
+    bySeniority[r].count++; bySeniority[r].sum += s.rating;
+  }
+  const seniorityOrder = ['Less than a year', '1–3 years', '3–7 years', '7+ years', 'Unknown'];
+  const seniorityChart = seniorityOrder
+    .filter(s => bySeniority[s])
+    .map(s => ({
+      seniority: s === 'Less than a year' ? '<1y' : s.replace(' years', 'y'),
+      avg: +(bySeniority[s].sum / bySeniority[s].count).toFixed(2),
+      count: bySeniority[s].count,
+    }));
+
+  // Pace
+  const paceCounts = [0, 0, 0];
+  for (const s of subs) if (typeof s.pace === 'number') paceCounts[s.pace]++;
+  const paceChart = ['Too slow', 'Just right', 'Too fast'].map((label, i) => ({
+    label, count: paceCounts[i]
+  }));
+
+  // Takeaways with avg rating per takeaway
+  const takeawayStats = {};
+  for (const s of subs) {
+    for (const t of (s.takeaways || [])) {
+      if (!takeawayStats[t]) takeawayStats[t] = { count: 0, sum: 0 };
+      takeawayStats[t].count++; takeawayStats[t].sum += s.rating;
+    }
+  }
+  const takeawayChart = Object.entries(takeawayStats)
+    .map(([t, v]) => ({ takeaway: t.length > 36 ? t.slice(0, 34) + '…' : t, count: v.count, avg: +(v.sum/v.count).toFixed(2) }))
+    .sort((a,b) => b.count - a.count);
+
+  // Comments
+  const comments = subs.filter(s => s.comment).map(s => ({
+    comment: s.comment, role: s.role, rating: s.rating, seniority: s.seniority,
+  }));
+
+  // Auto insights
+  const insights = [];
+  if (roleChart.length >= 2) {
+    const best = roleChart[0], worst = roleChart[roleChart.length-1];
+    if (best.avg - worst.avg >= 1) {
+      insights.push({
+        label: 'Role divide',
+        text: `Loved by ${best.role} (⌀${best.avg}) but underperformed for ${worst.role} (⌀${worst.avg}).`
+      });
+    }
+  }
+  if (stdDev > 1.2) {
+    insights.push({
+      label: 'Polarizing',
+      text: `High disagreement (σ=${stdDev.toFixed(2)}). Some loved it, some didn't — worth reading the comments.`
+    });
+  } else if (stdDev < 0.6 && avg >= 4) {
+    insights.push({
+      label: 'Universal hit',
+      text: `Consistently high ratings across the room (σ=${stdDev.toFixed(2)}).`
+    });
+  }
+  if (paceCounts[2] > paceCounts[1] && paceCounts[2] > 0) {
+    insights.push({
+      label: 'Pacing issue',
+      text: `Most attendees felt it was too fast (${paceCounts[2]} of ${subs.length}).`
+    });
+  } else if (paceCounts[0] > paceCounts[1] && paceCounts[0] > 0) {
+    insights.push({
+      label: 'Pacing issue',
+      text: `Most attendees felt it was too slow (${paceCounts[0]} of ${subs.length}).`
+    });
+  }
+  if (takeawayChart.length && takeawayChart[0].takeaway.toLowerCase().includes("didn't take")) {
+    insights.push({
+      label: 'Limited transfer',
+      text: `The most-picked takeaway was "didn't take much away" — consider revising the call-to-action.`
+    });
+  }
+  const applyTakeaway = takeawayChart.find(t => t.takeaway.toLowerCase().includes('plan to apply'));
+  if (applyTakeaway && applyTakeaway.count >= subs.length * 0.5) {
+    insights.push({
+      label: 'High intent',
+      text: `${applyTakeaway.count} of ${subs.length} plan to apply something — strong actionability.`
+    });
+  }
+
+  return {
+    count: subs.length, avg: +avg.toFixed(2), stdDev: +stdDev.toFixed(2),
+    emojiDist, roleChart, seniorityChart, paceChart, takeawayChart, comments, insights,
+  };
+}
+
+// Onsite-wide analytics
+function analyzeOnsite(submissions, lectures) {
+  if (!submissions.length) return null;
+
+  // League table with stdDev
+  const byLec = {};
+  for (const s of submissions) {
+    if (!byLec[s.lecture_id]) byLec[s.lecture_id] = [];
+    byLec[s.lecture_id].push(s.rating);
+  }
+  const league = Object.entries(byLec).map(([lid, ratings]) => {
+    const lec = lectures.find(l => l.id === lid) || { title: lid, speaker: '', day: 0, type: '' };
+    const avg = ratings.reduce((a,b) => a+b, 0) / ratings.length;
+    const stdDev = Math.sqrt(ratings.reduce((a,r) => a + (r-avg)**2, 0) / ratings.length);
+    return { id: lid, ...lec, avg: +avg.toFixed(2), stdDev: +stdDev.toFixed(2), count: ratings.length };
+  }).sort((a,b) => b.avg - a.avg);
+
+  // Heatmap: role × session
+  const roles = [...new Set(submissions.map(s => s.role || 'Unknown'))].sort();
+  const heatmap = league.map(lec => {
+    const row = { id: lec.id, title: lec.title, day: lec.day };
+    for (const role of roles) {
+      const subs = submissions.filter(s => s.lecture_id === lec.id && (s.role || 'Unknown') === role);
+      row[role] = subs.length ? +(subs.reduce((a,s) => a+s.rating, 0) / subs.length).toFixed(1) : null;
+    }
+    return row;
+  });
+
+  // Day-by-day arc (avg rating by chronological order within each day)
+  const dayArcs = {};
+  for (const lec of league.slice().sort((a,b) => a.day - b.day || a.title.localeCompare(b.title))) {
+    if (!dayArcs[lec.day]) dayArcs[lec.day] = [];
+    dayArcs[lec.day].push({ name: lec.title.length > 22 ? lec.title.slice(0, 20) + '…' : lec.title, avg: lec.avg });
+  }
+
+  return { league, heatmap, roles, dayArcs, totalSubmissions: submissions.length };
+}
+
+// Renders heatmap cell with color
+function heatColor(value) {
+  if (value === null || value === undefined) return '#ebe1cf';
+  if (value >= 4.5) return '#1e90ff';
+  if (value >= 4)   return '#588157';
+  if (value >= 3.5) return '#b08968';
+  if (value >= 3)   return '#c8553d';
+  return '#1a1715';
+}
+
 function AdminPage() {
   const [authed, setAuthed] = useState(false); const [pin, setPin] = useState('');
   const [submissions, setSubmissions] = useState([]); const [finalSubs, setFinalSubs] = useState([]); const [projectSubs, setProjectSubs] = useState([]);
@@ -752,6 +958,11 @@ function AdminPage() {
     return Object.entries(map).map(([role, v]) => ({ role, count: v.count, avg: (v.sum / v.count).toFixed(2) }))
       .sort((a,b) => b.count - a.count);
   }, [submissions]);
+
+  // Deep onsite-wide analytics
+  const onsite = useMemo(() => analyzeOnsite(submissions, LECTURES), [submissions]);
+  // Drill-down per session
+  const drillDown = useMemo(() => filter === 'all' ? null : analyzeLecture(submissions, filter), [submissions, filter]);
 
   if (!authed) return (
     <div className="card" style={{ maxWidth: 380, margin: '60px auto' }}>
@@ -810,73 +1021,247 @@ function AdminPage() {
           ))}
         </div>
       )}
-      <div className="card anim" style={{ marginBottom: 24 }}>
-        <span className="eyebrow">Session ranking (avg · # of responses)</span>
-        <h3 className="serif" style={{ fontSize: 20, marginTop: 6, marginBottom: 16, fontWeight: 700 }}>League table</h3>
-        {byLecture.length === 0 && <p className="small">No responses yet.</p>}
-        {byLecture.slice().sort((a,b) => (b.sumRating/Math.max(b.count,1)) - (a.sumRating/Math.max(a.count,1))).map(l => {
-          const avg = (l.sumRating / l.count).toFixed(2);
-          return (
-            <div key={l.id} className="lec-row">
-              <div>
-                <span className="tag">Day {l.day}</span><span className="tag">{l.type}</span>
-                <span className="serif" style={{ fontSize: 16, fontWeight: 700 }}>{l.title}</span>
-                <p className="hand" style={{ fontSize: 18, color: 'var(--accent)' }}>{l.speaker}</p>
+      {/* Rich league table with consistency */}
+      {onsite && (
+        <div className="card anim" style={{ marginBottom: 24 }}>
+          <span className="eyebrow">Session ranking · sorted by average</span>
+          <h3 className="serif" style={{ fontSize: 20, marginTop: 6, marginBottom: 16, fontWeight: 700 }}>League table</h3>
+          <p className="small" style={{ marginBottom: 16 }}>
+            Top 3 highlighted in blue · σ (consistency) — higher means more disagreement in the room.
+          </p>
+          {onsite.league.map((l, i) => {
+            const isTop = i < 3;
+            const isBottom = i >= onsite.league.length - 3 && onsite.league.length > 6;
+            return (
+              <div key={l.id} className="lec-row" style={{ background: isTop ? 'rgba(30,144,255,0.05)' : isBottom ? 'rgba(200,85,61,0.05)' : 'transparent', padding: '14px 8px' }}>
+                <div>
+                  <span className="tag">#{i+1}</span>
+                  <span className="tag">Day {l.day}</span>
+                  <span className="tag">{l.type}</span>
+                  <span className="serif" style={{ fontSize: 16, fontWeight: 700 }}>{l.title}</span>
+                  <p className="hand" style={{ fontSize: 18, color: 'var(--accent)' }}>{l.speaker}</p>
+                </div>
+                <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <div className="stat-num" style={{ fontSize: 28, color: isTop ? 'var(--scopely)' : isBottom ? 'var(--accent)' : 'var(--ink)' }}>{l.avg}</div>
+                  <span className="small">{l.count} responses · σ {l.stdDev}</span>
+                </div>
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <div className="stat-num" style={{ fontSize: 28 }}>{avg}</div>
-                <span className="small">{l.count} responses</span>
-              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Day arc — how ratings flowed through each day */}
+      {onsite && Object.keys(onsite.dayArcs).length > 0 && (
+        <div className="card anim" style={{ marginBottom: 24 }}>
+          <span className="eyebrow">Audience journey</span>
+          <h3 className="serif" style={{ fontSize: 20, marginTop: 6, marginBottom: 16, fontWeight: 700 }}>How the room moved through each day</h3>
+          {Object.entries(onsite.dayArcs).map(([day, sessions]) => (
+            <div key={day} style={{ marginBottom: 16 }}>
+              <p className="small" style={{ marginBottom: 8, fontWeight: 700 }}>Day {day}</p>
+              <ResponsiveContainer width="100%" height={180}>
+                <LineChart data={sessions} margin={{ top: 5, right: 10, left: -20, bottom: 30 }}>
+                  <CartesianGrid stroke="#1a1715" strokeOpacity={0.1} vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 9, fill: '#4a423c' }} angle={-25} textAnchor="end" interval={0} />
+                  <YAxis domain={[1, 5]} tick={{ fontSize: 11, fill: '#4a423c' }} />
+                  <Tooltip content={<NewsprintTooltip />} />
+                  <Line type="monotone" dataKey="avg" stroke="#1e90ff" strokeWidth={2.5} dot={{ fill: '#1e90ff', r: 5 }} activeDot={{ r: 7 }} />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      )}
+
+      {/* Heatmap: role × session */}
+      {onsite && onsite.heatmap.length > 0 && onsite.roles.length > 1 && (
+        <div className="card anim" style={{ marginBottom: 24 }}>
+          <span className="eyebrow">Cross-cut</span>
+          <h3 className="serif" style={{ fontSize: 20, marginTop: 6, marginBottom: 16, fontWeight: 700 }}>Who liked what · session × role heatmap</h3>
+          <p className="small" style={{ marginBottom: 12 }}>Each cell shows the average rating for that role on that session. Empty cells = no responses.</p>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', fontSize: 12, minWidth: '100%' }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left', padding: '8px 6px', borderBottom: '1.5px solid #1a1715', fontWeight: 700, position: 'sticky', left: 0, background: '#f4ede1', minWidth: 180 }}>Session</th>
+                  {onsite.roles.map(role => (
+                    <th key={role} style={{ padding: '8px 6px', borderBottom: '1.5px solid #1a1715', fontWeight: 700, minWidth: 60, fontSize: 10, letterSpacing: '0.1em' }}>
+                      {role.length > 10 ? role.slice(0, 10) : role}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {onsite.heatmap.map(row => (
+                  <tr key={row.id}>
+                    <td style={{ padding: '8px 6px', borderBottom: '1px dashed #1a1715', position: 'sticky', left: 0, background: '#f4ede1' }}>
+                      <span className="tag" style={{ fontSize: 9 }}>D{row.day}</span>
+                      <span style={{ fontSize: 11 }}>{row.title.length > 28 ? row.title.slice(0, 26) + '…' : row.title}</span>
+                    </td>
+                    {onsite.roles.map(role => {
+                      const v = row[role];
+                      return (
+                        <td key={role} style={{ padding: 4, borderBottom: '1px dashed #1a1715', textAlign: 'center' }}>
+                          {v !== null && v !== undefined ? (
+                            <div style={{
+                              background: heatColor(v),
+                              color: v >= 3.5 ? '#f4ede1' : '#1a1715',
+                              padding: '6px 4px',
+                              fontWeight: 700,
+                              fontSize: 12,
+                            }}>{v}</div>
+                          ) : (
+                            <div style={{ color: '#aaa', fontSize: 11 }}>—</div>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="legend-row" style={{ marginTop: 12 }}>
+            <span><span className="legend-dot" style={{ background: '#1e90ff' }}></span>4.5+</span>
+            <span><span className="legend-dot" style={{ background: '#588157' }}></span>4.0–4.5</span>
+            <span><span className="legend-dot" style={{ background: '#b08968' }}></span>3.5–4.0</span>
+            <span><span className="legend-dot" style={{ background: '#c8553d' }}></span>3.0–3.5</span>
+            <span><span className="legend-dot" style={{ background: '#1a1715' }}></span>&lt;3.0</span>
+          </div>
+        </div>
+      )}
       <div className="card anim" style={{ marginBottom: 24 }}>
         <span className="eyebrow">Drill into a session</span>
         <select className="select" style={{ marginTop: 12, marginBottom: 16 }} value={filter} onChange={e => setFilter(e.target.value)}>
           <option value="all">All sessions</option>
           {LECTURES.map(l => <option key={l.id} value={l.id}>{l.title} — {l.speaker}</option>)}
         </select>
-        {filter !== 'all' && (() => {
-          const lec = byLecture.find(l => l.id === filter);
-          if (!lec) return <p className="small">No responses yet for this session.</p>;
-          const totalTakeaway = Object.values(lec.takeaways).reduce((a,b) => a+b, 0) || 1;
-          const paceLabels = ['Too slow', 'Just right', 'Too fast'];
+        {filter !== 'all' && !drillDown && <p className="small">No responses yet for this session.</p>}
+        {filter !== 'all' && drillDown && (() => {
+          const lec = LECTURES.find(l => l.id === filter);
           return (
             <>
-              <h3 className="serif" style={{ fontSize: 20, marginBottom: 14, fontWeight: 700 }}>{lec.title}</h3>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
-                <div className="stat"><span className="eyebrow">Average</span><div className="stat-num">{(lec.sumRating/lec.count).toFixed(2)}</div></div>
-                <div className="stat"><span className="eyebrow">Responses</span><div className="stat-num">{lec.count}</div></div>
+              <h3 className="serif" style={{ fontSize: 22, marginBottom: 4, fontWeight: 700 }}>{lec.title}</h3>
+              <p className="hand" style={{ fontSize: 20, color: 'var(--accent)', marginBottom: 16 }}>{lec.speaker}</p>
+
+              {/* Headline stats */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 10, marginBottom: 20 }}>
+                <div className="stat"><span className="eyebrow">Average</span><div className="stat-num">{drillDown.avg}</div></div>
+                <div className="stat"><span className="eyebrow">Responses</span><div className="stat-num">{drillDown.count}</div></div>
+                <div className="stat"><span className="eyebrow">Consistency (σ)</span><div className="stat-num" style={{ color: drillDown.stdDev > 1.2 ? 'var(--accent)' : drillDown.stdDev < 0.6 ? 'var(--accent-2)' : 'var(--ink)' }}>{drillDown.stdDev}</div></div>
               </div>
-              <span className="eyebrow">Pace</span>
-              <div style={{ marginTop: 10, marginBottom: 16 }}>
-                {lec.paces.map((c,i) => (
-                  <div key={i} className="bar-row">
-                    <span>{paceLabels[i]}</span>
-                    <div className="bar-track"><div className="bar-fill" style={{ width: `${(c / Math.max(lec.count,1)) * 100}%` }} /></div>
-                    <span className="small">{c}</span>
+
+              {/* Auto insights */}
+              {drillDown.insights.length > 0 && (
+                <div style={{ marginBottom: 20 }}>
+                  {drillDown.insights.map((ins, i) => (
+                    <div key={i} className="insight-card">
+                      <div className="label">{ins.label}</div>
+                      <div className="text">{ins.text}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Emoji distribution — bar chart */}
+              <div className="chart-card">
+                <div className="chart-title">Rating distribution</div>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={drillDown.emojiDist} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                    <CartesianGrid stroke="#1a1715" strokeOpacity={0.1} vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#4a423c' }} interval={0} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#4a423c' }} />
+                    <Tooltip content={<NewsprintTooltip />} cursor={{ fill: '#ebe1cf' }} />
+                    <Bar dataKey="count" radius={[3,3,0,0]}>
+                      {drillDown.emojiDist.map((entry, i) => (
+                        <Cell key={i} fill={RATING_COLORS[entry.rating]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Avg rating by role */}
+              {drillDown.roleChart.length > 1 && (
+                <div className="chart-card">
+                  <div className="chart-title">Average rating by role</div>
+                  <ResponsiveContainer width="100%" height={Math.max(160, drillDown.roleChart.length * 32)}>
+                    <BarChart data={drillDown.roleChart} layout="vertical" margin={{ top: 5, right: 30, left: 100, bottom: 5 }}>
+                      <CartesianGrid stroke="#1a1715" strokeOpacity={0.1} horizontal={false} />
+                      <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 11, fill: '#4a423c' }} />
+                      <YAxis dataKey="role" type="category" tick={{ fontSize: 11, fill: '#1a1715' }} width={100} />
+                      <Tooltip content={<NewsprintTooltip />} cursor={{ fill: '#ebe1cf' }} />
+                      <Bar dataKey="avg" fill="#1a1715" radius={[0,3,3,0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {/* Avg rating by seniority */}
+              {drillDown.seniorityChart.length > 1 && (
+                <div className="chart-card">
+                  <div className="chart-title">Average rating by seniority</div>
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={drillDown.seniorityChart} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                      <CartesianGrid stroke="#1a1715" strokeOpacity={0.1} vertical={false} />
+                      <XAxis dataKey="seniority" tick={{ fontSize: 11, fill: '#4a423c' }} />
+                      <YAxis domain={[0, 5]} tick={{ fontSize: 11, fill: '#4a423c' }} />
+                      <Tooltip content={<NewsprintTooltip />} cursor={{ fill: '#ebe1cf' }} />
+                      <Bar dataKey="avg" fill="#588157" radius={[3,3,0,0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {/* Pace pie */}
+              {drillDown.paceChart.some(p => p.count > 0) && (
+                <div className="chart-card">
+                  <div className="chart-title">Pace</div>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <PieChart>
+                      <Pie data={drillDown.paceChart} dataKey="count" nameKey="label" cx="50%" cy="50%" outerRadius={70} label={({ label, count }) => count > 0 ? `${label}: ${count}` : ''}>
+                        <Cell fill="#c8553d" />
+                        <Cell fill="#588157" />
+                        <Cell fill="#1e90ff" />
+                      </Pie>
+                      <Tooltip content={<NewsprintTooltip />} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {/* Takeaways with avg rating */}
+              {drillDown.takeawayChart.length > 0 && (
+                <div className="chart-card">
+                  <div className="chart-title">Takeaways (count + avg rating of those who picked it)</div>
+                  <ResponsiveContainer width="100%" height={Math.max(180, drillDown.takeawayChart.length * 40)}>
+                    <BarChart data={drillDown.takeawayChart} layout="vertical" margin={{ top: 5, right: 30, left: 160, bottom: 5 }}>
+                      <CartesianGrid stroke="#1a1715" strokeOpacity={0.1} horizontal={false} />
+                      <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: '#4a423c' }} />
+                      <YAxis dataKey="takeaway" type="category" tick={{ fontSize: 10, fill: '#1a1715' }} width={160} />
+                      <Tooltip content={<NewsprintTooltip />} cursor={{ fill: '#ebe1cf' }} />
+                      <Bar dataKey="count" fill="#c8553d" radius={[0,3,3,0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div className="legend-row" style={{ padding: '0 8px 8px' }}>
+                    {drillDown.takeawayChart.slice(0, 4).map((t, i) => (
+                      <span key={i} style={{ fontSize: 11, color: 'var(--ink-soft)' }}>
+                        <strong>{t.takeaway}</strong>: ⌀{t.avg}
+                      </span>
+                    ))}
                   </div>
-                ))}
-              </div>
-              <span className="eyebrow">What people took away</span>
-              <div style={{ marginTop: 10, marginBottom: 16 }}>
-                {Object.entries(lec.takeaways).sort((a,b) => b[1]-a[1]).map(([t,c]) => (
-                  <div key={t} className="bar-row">
-                    <span style={{ fontSize: 12 }}>{t}</span>
-                    <div className="bar-track"><div className="bar-fill" style={{ width: `${(c/totalTakeaway)*100}%`, background: 'var(--accent)' }} /></div>
-                    <span className="small">{c}</span>
-                  </div>
-                ))}
-              </div>
-              {lec.comments.length > 0 && (
+                </div>
+              )}
+
+              {/* Comments */}
+              {drillDown.comments.length > 0 && (
                 <>
-                  <span className="eyebrow">Open comments</span>
+                  <span className="eyebrow">Open comments ({drillDown.comments.length})</span>
                   <div style={{ marginTop: 10 }}>
-                    {lec.comments.map((c, i) => (
-                      <div key={i} className="quote-card">
+                    {drillDown.comments.map((c, i) => (
+                      <div key={i} className="quote-card" style={{ borderLeftColor: RATING_COLORS[c.rating] }}>
                         <p style={{ fontSize: 15 }}>{c.comment}</p>
-                        <p className="small" style={{ marginTop: 4 }}>· {c.role || 'Unknown'} · rating {c.rating}</p>
+                        <p className="small" style={{ marginTop: 4 }}>· {c.role || 'Unknown'} · {c.seniority || ''} · rating {c.rating}</p>
                       </div>
                     ))}
                   </div>
