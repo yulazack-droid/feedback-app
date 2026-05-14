@@ -94,11 +94,11 @@ const STYLES = `
                max-width: 760px; margin: 0 auto; }
   .brand-mark { display: flex; align-items: center; gap: 10px; }
   .brand-mark svg { display: block; }
-  .brand-text { font-family: 'Heebo', sans-serif; font-weight: 700; font-size: 16px; letter-spacing: 0.22em; color: var(--scopely); text-transform: uppercase; }
+  .brand-text { font-family: 'Heebo', sans-serif; font-weight: 900; font-size: 18px; letter-spacing: 0.18em; color: var(--ink); text-transform: uppercase; }
   .brand-context { font-family: 'Heebo', sans-serif; font-size: 11px; color: var(--ink-soft); letter-spacing: 0.15em; text-transform: uppercase; }
   .brand-footer { text-align: center; padding: 24px 20px 16px; max-width: 760px; margin: 32px auto 0;
                   border-top: 1.5px dashed var(--ink); }
-  .brand-footer-text { font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--scopely); font-weight: 700; }
+  .brand-footer-text { font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--ink-soft); font-weight: 700; }
   .brand-footer-tag { font-family: 'Caveat', cursive; font-size: 18px; color: var(--scopely); margin-top: 2px; }
   @media print { body::before { display: none; } .btn, .toolbar, .brand-bar { display: none !important; } .card { box-shadow: none; page-break-inside: avoid; } }
 `;
@@ -605,10 +605,10 @@ const IMPACT_AREAS = [
 
 function FinalPage() {
   const [profile, setProfile] = useState(loadProfileLocal());
-  const [overall, setOverall] = useState(null); const [recommend, setRecommend] = useState(null);
+  const [overall, setOverall] = useState(null);
   const [bestSession, setBestSession] = useState(''); const [growth, setGrowth] = useState([]);
   const [networkValue, setNetworkValue] = useState(null); const [logistics, setLogistics] = useState(null);
-  const [next, setNext] = useState(''); const [highlight, setHighlight] = useState(''); const [improve, setImprove] = useState('');
+  const [next, setNext] = useState(''); const [improve, setImprove] = useState('');
   const [submitted, setSubmitted] = useState(false); const [submitting, setSubmitting] = useState(false); const [error, setError] = useState(null);
 
   if (!profile) return <ProfileForm onDone={setProfile} />;
@@ -620,8 +620,8 @@ function FinalPage() {
     setSubmitting(true); setError(null);
     try {
       await insertFinalFeedback({
-        overall, recommend, best_session: bestSession || null, growth, network_value: networkValue, logistics,
-        next_action: next.trim() || null, highlight: highlight.trim() || null, improve: improve.trim() || null,
+        overall, best_session: bestSession || null, growth, network_value: networkValue, logistics,
+        next_action: next.trim() || null, improve: improve.trim() || null,
         role: profile.role, seniority: profile.seniority, game_type: profile.gameType || null,
       });
       setSubmitted(true);
@@ -661,14 +661,6 @@ function FinalPage() {
         <ScaleRow value={overall} onChange={setOverall} />
       </div>
       <div className="card anim" style={{ marginBottom: 16 }}>
-        <span className="eyebrow">Would you recommend this to a colleague? (1–10)</span>
-        <div style={{ display: 'flex', gap: 4, marginTop: 12, flexWrap: 'wrap' }}>
-          {Array.from({ length: 10 }, (_, i) => i + 1).map(v => (
-            <button key={v} className={`scale-btn ${recommend === v ? 'active' : ''}`} onClick={() => setRecommend(v)}>{v}</button>
-          ))}
-        </div>
-      </div>
-      <div className="card anim" style={{ marginBottom: 16 }}>
         <span className="eyebrow">Most meaningful session for you</span>
         <select className="select" style={{ marginTop: 12 }} value={bestSession} onChange={e => setBestSession(e.target.value)}>
           <option value="">— Pick a session —</option>
@@ -697,10 +689,6 @@ function FinalPage() {
       <div className="card anim" style={{ marginBottom: 16 }}>
         <span className="eyebrow">First thing you'll do back at work?</span>
         <textarea className="textarea" style={{ marginTop: 10 }} value={next} onChange={e => setNext(e.target.value)} placeholder="On Monday morning I'll..." />
-      </div>
-      <div className="card anim" style={{ marginBottom: 16 }}>
-        <span className="eyebrow">A moment / quote you'll remember</span>
-        <textarea className="textarea" style={{ marginTop: 10 }} value={highlight} onChange={e => setHighlight(e.target.value)} />
       </div>
       <div className="card anim" style={{ marginBottom: 20 }}>
         <span className="eyebrow">One thing we should have done differently</span>
@@ -751,10 +739,7 @@ function AdminPage() {
     const avg = total ? (submissions.reduce((a,s) => a + s.rating, 0) / total).toFixed(2) : '–';
     const totalFinal = finalSubs.length;
     const avgOverall = totalFinal ? (finalSubs.reduce((a,s) => a + s.overall, 0) / totalFinal).toFixed(2) : '–';
-    const promoters = finalSubs.filter(s => s.recommend >= 9).length;
-    const detractors = finalSubs.filter(s => s.recommend <= 6).length;
-    const nps = totalFinal ? Math.round(((promoters - detractors) / totalFinal) * 100) : '–';
-    return { total, avg, totalFinal, avgOverall, nps };
+    return { total, avg, totalFinal, avgOverall };
   }, [submissions, finalSubs]);
 
   const roleBreakdown = useMemo(() => {
@@ -811,7 +796,6 @@ function AdminPage() {
         <div className="stat"><span className="eyebrow">Session feedback</span><div className="stat-num">{overall.total}</div></div>
         <div className="stat"><span className="eyebrow">Avg (1–5)</span><div className="stat-num">{overall.avg}</div></div>
         <div className="stat"><span className="eyebrow">Wrap-up surveys</span><div className="stat-num">{overall.totalFinal}</div></div>
-        <div className="stat"><span className="eyebrow">NPS estimate</span><div className="stat-num" style={{ color: 'var(--accent)' }}>{overall.nps}</div></div>
       </div>
       {roleBreakdown.length > 0 && (
         <div className="card anim" style={{ marginBottom: 24 }}>
@@ -906,23 +890,9 @@ function AdminPage() {
         <div className="card anim" style={{ marginBottom: 24 }}>
           <span className="eyebrow">Wrap-up survey · selected quotes</span>
           <h3 className="serif" style={{ fontSize: 20, marginTop: 6, marginBottom: 16, fontWeight: 700 }}>The voice of the room</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
+          <div style={{ marginBottom: 20 }}>
             <div className="stat"><span className="eyebrow">Overall</span><div className="stat-num">{overall.avgOverall}</div></div>
-            <div className="stat"><span className="eyebrow">NPS</span><div className="stat-num">{overall.nps}</div></div>
           </div>
-          {finalSubs.filter(s => s.highlight).length > 0 && (
-            <>
-              <span className="eyebrow">Memorable moments</span>
-              <div style={{ marginTop: 10, marginBottom: 16 }}>
-                {finalSubs.filter(s => s.highlight).map((s,i) => (
-                  <div key={i} className="quote-card">
-                    <p style={{ fontSize: 15 }}>{s.highlight}</p>
-                    <p className="small">· {s.role || ''}</p>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
           {finalSubs.filter(s => s.next_action).length > 0 && (
             <>
               <span className="eyebrow">What gets done Monday morning</span>
