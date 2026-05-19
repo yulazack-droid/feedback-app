@@ -89,6 +89,11 @@ const STYLES = `
   .insight-card .label { font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-soft); font-weight: 700; }
   .insight-card .text { font-size: 14px; margin-top: 4px; line-height: 1.5; }
   .chart-card { background: var(--cream); border: 1.5px solid var(--ink); padding: 16px 8px 8px; margin-bottom: 12px; }
+  .tab-bar { display: flex; gap: 4px; margin-bottom: 24px; border-bottom: 1.5px solid var(--ink); overflow-x: auto; }
+  .tab-btn { background: transparent; border: none; padding: 12px 18px; font-family: 'Heebo', sans-serif; font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; cursor: pointer; color: var(--ink-soft); border-bottom: 3px solid transparent; transition: all 0.15s; white-space: nowrap; font-weight: 700; }
+  .tab-btn:hover { color: var(--ink); }
+  .tab-btn.active { color: var(--ink); border-bottom-color: var(--accent); }
+  .tab-btn .count { background: var(--cream-2); padding: 2px 8px; border-radius: 12px; margin-inline-start: 6px; font-size: 11px; }
   .chart-title { font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--ink-soft); font-weight: 500; padding: 0 8px 8px; }
   .heatmap-cell { border: 1px solid var(--ink); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
   .legend-row { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; margin-top: 8px; }
@@ -903,22 +908,40 @@ function heatColor(value) {
   if (value >= 4)   return '#588157';
   if (value >= 3.5) return '#b08968';
   if (value >= 3)   return '#c8553d';
-  return '#1a1715';
+  return '#8b2e1b';  // dark red for lowest scores (more readable than black)
 }
 
 function AdminPage() {
   const [authed, setAuthed] = useState(false); const [pin, setPin] = useState('');
   const [submissions, setSubmissions] = useState([]); const [finalSubs, setFinalSubs] = useState([]); const [projectSubs, setProjectSubs] = useState([]);
   const [loading, setLoading] = useState(false); const [filter, setFilter] = useState('all');
+  const [lastRefresh, setLastRefresh] = useState(null);
+  const [tab, setTab] = useState('overview'); // overview | session | voices | project
+  const [voicesFilter, setVoicesFilter] = useState({ session: 'all', rating: 'all', role: 'all' });
 
   const refresh = async () => {
     setLoading(true);
     try {
       const [subs, fins, projs] = await Promise.all([fetchLectureFeedback(), fetchFinalFeedback(), fetchProjectFeedback()]);
       setSubmissions(subs); setFinalSubs(fins); setProjectSubs(projs);
+      setLastRefresh(new Date());
     } finally { setLoading(false); }
   };
   useEffect(() => { if (authed) refresh(); }, [authed]);
+
+  // Auto-refresh every 30 seconds + when tab regains focus
+  useEffect(() => {
+    if (!authed) return;
+    const interval = setInterval(() => { refresh(); }, 30000);
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [authed]);
 
   const byLecture = useMemo(() => {
     const map = {};
@@ -1002,12 +1025,37 @@ function AdminPage() {
         <button className="btn btn-ghost" onClick={refresh}>{loading ? 'Loading...' : 'Refresh'}</button>
         <button className="btn btn-ghost" onClick={exportCSV} disabled={!submissions.length}>Download CSV</button>
         <button className="btn btn-ghost" onClick={() => window.location.hash = ''}>Back</button>
+        {lastRefresh && (
+          <span className="small" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginInlineStart: 'auto', color: 'var(--ink-soft)' }}>
+            <span style={{ width: 8, height: 8, background: 'var(--accent-2)', borderRadius: '50%', display: 'inline-block' }}></span>
+            Auto-refreshing · last updated {lastRefresh.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          </span>
+        )}
       </div>
       <div className="anim" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 12, marginBottom: 24 }}>
         <div className="stat"><span className="eyebrow">Session feedback</span><div className="stat-num">{overall.total}</div></div>
         <div className="stat"><span className="eyebrow">Avg (1–5)</span><div className="stat-num">{overall.avg}</div></div>
         <div className="stat"><span className="eyebrow">Wrap-up surveys</span><div className="stat-num">{overall.totalFinal}</div></div>
       </div>
+
+      {/* TAB BAR */}
+      <div className="tab-bar anim">
+        <button className={`tab-btn ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>Overview</button>
+        <button className={`tab-btn ${tab === 'session' ? 'active' : ''}`} onClick={() => setTab('session')}>Per session</button>
+        <button className={`tab-btn ${tab === 'voices' ? 'active' : ''}`} onClick={() => setTab('voices')}>
+          Voices
+          <span className="count">{submissions.filter(s => s.comment).length + finalSubs.filter(s => s.next_action || s.improve).length + projectSubs.filter(s => s.takeaway).length}</span>
+        </button>
+        {projectSubs.length > 0 && (
+          <button className={`tab-btn ${tab === 'project' ? 'active' : ''}`} onClick={() => setTab('project')}>
+            Project
+            <span className="count">{projectSubs.length}</span>
+          </button>
+        )}
+      </div>
+
+      {/* === OVERVIEW TAB === */}
+      {tab === 'overview' && (<>
       {roleBreakdown.length > 0 && (
         <div className="card anim" style={{ marginBottom: 24 }}>
           <span className="eyebrow">By role</span>
@@ -1126,10 +1174,15 @@ function AdminPage() {
             <span><span className="legend-dot" style={{ background: '#588157' }}></span>4.0–4.5</span>
             <span><span className="legend-dot" style={{ background: '#b08968' }}></span>3.5–4.0</span>
             <span><span className="legend-dot" style={{ background: '#c8553d' }}></span>3.0–3.5</span>
-            <span><span className="legend-dot" style={{ background: '#1a1715' }}></span>&lt;3.0</span>
+            <span><span className="legend-dot" style={{ background: '#8b2e1b' }}></span>&lt;3.0</span>
           </div>
         </div>
       )}
+      </>)}
+      {/* === END OVERVIEW TAB === */}
+
+      {/* === PER SESSION TAB === */}
+      {tab === 'session' && (
       <div className="card anim" style={{ marginBottom: 24 }}>
         <span className="eyebrow">Drill into a session</span>
         <select className="select" style={{ marginTop: 12, marginBottom: 16 }} value={filter} onChange={e => setFilter(e.target.value)}>
@@ -1271,43 +1324,150 @@ function AdminPage() {
           );
         })()}
       </div>
-      {finalSubs.length > 0 && (
-        <div className="card anim" style={{ marginBottom: 24 }}>
-          <span className="eyebrow">Wrap-up survey · selected quotes</span>
-          <h3 className="serif" style={{ fontSize: 20, marginTop: 6, marginBottom: 16, fontWeight: 700 }}>The voice of the room</h3>
-          <div style={{ marginBottom: 20 }}>
-            <div className="stat"><span className="eyebrow">Overall</span><div className="stat-num">{overall.avgOverall}</div></div>
-          </div>
-          {finalSubs.filter(s => s.next_action).length > 0 && (
-            <>
-              <span className="eyebrow">What gets done Monday morning</span>
-              <div style={{ marginTop: 10, marginBottom: 16 }}>
-                {finalSubs.filter(s => s.next_action).map((s,i) => (
-                  <div key={i} className="quote-card" style={{ borderLeftColor: 'var(--accent-2)' }}>
-                    <p style={{ fontSize: 15 }}>{s.next_action}</p>
-                    <p className="small">· {s.role || ''}</p>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-          {finalSubs.filter(s => s.improve).length > 0 && (
-            <>
-              <span className="eyebrow">What to improve next time</span>
-              <div style={{ marginTop: 10 }}>
-                {finalSubs.filter(s => s.improve).map((s,i) => (
-                  <div key={i} className="quote-card" style={{ borderLeftColor: 'var(--gold)' }}>
-                    <p style={{ fontSize: 15 }}>{s.improve}</p>
-                    <p className="small">· {s.role || ''}</p>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
       )}
+      {/* === END PER SESSION TAB === */}
 
-      {projectSubs.length > 0 && (() => {
+      {/* === VOICES TAB === */}
+      {tab === 'voices' && (() => {
+        // Build unified voices list from all 3 sources
+        const allVoices = [];
+        for (const s of submissions) {
+          if (s.comment) {
+            const lec = LECTURES.find(l => l.id === s.lecture_id);
+            allVoices.push({
+              type: 'Session feedback',
+              source: lec ? lec.title : s.lecture_id,
+              sourceId: s.lecture_id,
+              text: s.comment,
+              role: s.role || 'Unknown',
+              seniority: s.seniority || '',
+              rating: s.rating,
+              day: s.day || (lec ? lec.day : null),
+            });
+          }
+        }
+        for (const s of finalSubs) {
+          if (s.next_action) {
+            allVoices.push({
+              type: 'Wrap-up · Monday morning',
+              source: 'Wrap-up survey',
+              sourceId: '__final__',
+              text: s.next_action,
+              role: s.role || 'Unknown',
+              seniority: s.seniority || '',
+              rating: s.overall,
+              day: null,
+            });
+          }
+          if (s.improve) {
+            allVoices.push({
+              type: 'Wrap-up · Improve next time',
+              source: 'Wrap-up survey',
+              sourceId: '__final__',
+              text: s.improve,
+              role: s.role || 'Unknown',
+              seniority: s.seniority || '',
+              rating: s.overall,
+              day: null,
+            });
+          }
+        }
+        for (const s of projectSubs) {
+          if (s.takeaway) {
+            allVoices.push({
+              type: 'Project · Takeaway',
+              source: 'Project session',
+              sourceId: 'd2-project',
+              text: s.takeaway,
+              role: s.role || 'Unknown',
+              seniority: s.seniority || '',
+              rating: s.rating,
+              day: 2,
+            });
+          }
+        }
+
+        // Apply filters
+        const filtered = allVoices.filter(v => {
+          if (voicesFilter.session !== 'all' && v.sourceId !== voicesFilter.session) return false;
+          if (voicesFilter.role !== 'all' && v.role !== voicesFilter.role) return false;
+          if (voicesFilter.rating === 'high' && (v.rating || 0) < 4) return false;
+          if (voicesFilter.rating === 'low' && (v.rating || 0) >= 3) return false;
+          if (voicesFilter.rating === 'mid' && ((v.rating || 0) < 3 || (v.rating || 0) >= 4)) return false;
+          return true;
+        });
+
+        const allRoles = [...new Set(allVoices.map(v => v.role))].sort();
+        const sessionOptions = [...new Set(allVoices.map(v => ({ id: v.sourceId, name: v.source })).map(o => JSON.stringify(o)))].map(JSON.parse);
+
+        // Group by source for display
+        const grouped = {};
+        for (const v of filtered) {
+          if (!grouped[v.source]) grouped[v.source] = [];
+          grouped[v.source].push(v);
+        }
+
+        return (
+          <div className="card anim" style={{ marginBottom: 24 }}>
+            <span className="eyebrow">All written feedback</span>
+            <h3 className="serif" style={{ fontSize: 22, marginTop: 6, marginBottom: 6, fontWeight: 700 }}>Voices from the room</h3>
+            <p className="small" style={{ marginBottom: 16 }}>{filtered.length} of {allVoices.length} comments shown.</p>
+
+            {/* Filters */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10, marginBottom: 20 }}>
+              <div>
+                <span className="eyebrow" style={{ fontSize: 10 }}>Source</span>
+                <select className="select" style={{ marginTop: 4 }} value={voicesFilter.session} onChange={e => setVoicesFilter({...voicesFilter, session: e.target.value})}>
+                  <option value="all">All sources</option>
+                  {sessionOptions.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <span className="eyebrow" style={{ fontSize: 10 }}>Role</span>
+                <select className="select" style={{ marginTop: 4 }} value={voicesFilter.role} onChange={e => setVoicesFilter({...voicesFilter, role: e.target.value})}>
+                  <option value="all">All roles</option>
+                  {allRoles.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <div>
+                <span className="eyebrow" style={{ fontSize: 10 }}>Rating</span>
+                <select className="select" style={{ marginTop: 4 }} value={voicesFilter.rating} onChange={e => setVoicesFilter({...voicesFilter, rating: e.target.value})}>
+                  <option value="all">All ratings</option>
+                  <option value="high">High (4–5)</option>
+                  <option value="mid">Mid (3)</option>
+                  <option value="low">Low (1–2)</option>
+                </select>
+              </div>
+            </div>
+
+            {filtered.length === 0 && <p className="small" style={{ fontStyle: 'italic' }}>No comments match these filters.</p>}
+
+            {Object.entries(grouped).map(([source, items]) => (
+              <div key={source} style={{ marginBottom: 20 }}>
+                <h4 className="serif" style={{ fontSize: 17, fontWeight: 700, marginBottom: 8, paddingBottom: 6, borderBottom: '1px dashed var(--ink)' }}>
+                  {source} <span className="small" style={{ fontWeight: 400 }}>· {items.length} {items.length === 1 ? 'voice' : 'voices'}</span>
+                </h4>
+                {items.map((v, i) => (
+                  <div key={i} className="quote-card" style={{
+                    borderLeftColor: v.rating ? RATING_COLORS[Math.round(v.rating)] : 'var(--ink-soft)',
+                    marginBottom: 8
+                  }}>
+                    <span className="tag" style={{ fontSize: 10 }}>{v.type}</span>
+                    <p style={{ fontSize: 15, marginTop: 6 }}>{v.text}</p>
+                    <p className="small" style={{ marginTop: 4 }}>
+                      · {v.role}{v.seniority ? ` · ${v.seniority}` : ''}{v.rating ? ` · rating ${v.rating}` : ''}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+      {/* === END VOICES TAB === */}
+
+      {/* === PROJECT TAB === */}
+      {tab === 'project' && projectSubs.length > 0 && (() => {
         const total = projectSubs.length;
         const avgRating = (projectSubs.reduce((a,s) => a + s.rating, 0) / total).toFixed(2);
         const stepKeys = ['step_trend', 'step_adapt', 'step_ai', 'step_kpi', 'step_integrate'];
