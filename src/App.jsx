@@ -1046,6 +1046,12 @@ function AdminPage() {
           Voices
           <span className="count">{submissions.filter(s => s.comment).length + finalSubs.filter(s => s.next_action || s.improve).length + projectSubs.filter(s => s.takeaway).length}</span>
         </button>
+        {finalSubs.length > 0 && (
+          <button className={`tab-btn ${tab === 'wrapup' ? 'active' : ''}`} onClick={() => setTab('wrapup')}>
+            Wrap-up
+            <span className="count">{finalSubs.length}</span>
+          </button>
+        )}
         {projectSubs.length > 0 && (
           <button className={`tab-btn ${tab === 'project' ? 'active' : ''}`} onClick={() => setTab('project')}>
             Project
@@ -1465,6 +1471,113 @@ function AdminPage() {
         );
       })()}
       {/* === END VOICES TAB === */}
+
+      {/* === WRAP-UP TAB === */}
+      {tab === 'wrapup' && finalSubs.length > 0 && (() => {
+        const total = finalSubs.length;
+        const avg = (key) => {
+          const vals = finalSubs.map(s => s[key]).filter(v => typeof v === 'number');
+          return vals.length ? (vals.reduce((a,b) => a+b, 0) / vals.length).toFixed(2) : '–';
+        };
+        const avgOverall = avg('overall');
+        const avgNetwork = avg('network_value');
+        const avgLogistics = avg('logistics');
+
+        // Most meaningful session
+        const meaningfulCounts = {};
+        for (const s of finalSubs) if (s.best_session) meaningfulCounts[s.best_session] = (meaningfulCounts[s.best_session] || 0) + 1;
+        const meaningfulChart = Object.entries(meaningfulCounts)
+          .map(([id, count]) => {
+            const lec = LECTURES.find(l => l.id === id);
+            return { name: lec ? (lec.title.length > 30 ? lec.title.slice(0,28)+'…' : lec.title) : id, count };
+          })
+          .sort((a,b) => b.count - a.count);
+
+        // Growth areas
+        const growthCounts = {};
+        for (const s of finalSubs) for (const g of (s.growth || [])) growthCounts[g] = (growthCounts[g] || 0) + 1;
+        const growthChart = Object.entries(growthCounts)
+          .map(([area, count]) => ({ area: area.length > 36 ? area.slice(0,34)+'…' : area, count }))
+          .sort((a,b) => b.count - a.count);
+
+        return (
+          <div className="card anim" style={{ marginBottom: 24 }}>
+            <span className="eyebrow">Wrap-up survey · the big picture</span>
+            <h3 className="serif" style={{ fontSize: 22, marginTop: 6, marginBottom: 16, fontWeight: 700 }}>How the onsite landed overall</h3>
+
+            {/* Headline stats */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 10, marginBottom: 24 }}>
+              <div className="stat"><span className="eyebrow">Responses</span><div className="stat-num">{total}</div></div>
+              <div className="stat"><span className="eyebrow">Overall</span><div className="stat-num" style={{ color: 'var(--scopely)' }}>{avgOverall}</div></div>
+              <div className="stat"><span className="eyebrow">Networking</span><div className="stat-num">{avgNetwork}</div></div>
+              <div className="stat"><span className="eyebrow">Logistics</span><div className="stat-num">{avgLogistics}</div></div>
+            </div>
+
+            {/* Most meaningful session */}
+            {meaningfulChart.length > 0 && (
+              <div className="chart-card">
+                <div className="chart-title">Most meaningful session</div>
+                <ResponsiveContainer width="100%" height={Math.max(160, meaningfulChart.length * 38)}>
+                  <BarChart data={meaningfulChart} layout="vertical" margin={{ top: 5, right: 30, left: 150, bottom: 5 }}>
+                    <CartesianGrid stroke="#1a1715" strokeOpacity={0.1} horizontal={false} />
+                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: '#4a423c' }} />
+                    <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: '#1a1715' }} width={150} />
+                    <Tooltip content={<NewsprintTooltip />} cursor={{ fill: '#ebe1cf' }} />
+                    <Bar dataKey="count" fill="#1e90ff" radius={[0,3,3,0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Growth areas */}
+            {growthChart.length > 0 && (
+              <div className="chart-card">
+                <div className="chart-title">Where people feel they grew</div>
+                <ResponsiveContainer width="100%" height={Math.max(160, growthChart.length * 40)}>
+                  <BarChart data={growthChart} layout="vertical" margin={{ top: 5, right: 30, left: 160, bottom: 5 }}>
+                    <CartesianGrid stroke="#1a1715" strokeOpacity={0.1} horizontal={false} />
+                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: '#4a423c' }} />
+                    <YAxis dataKey="area" type="category" tick={{ fontSize: 10, fill: '#1a1715' }} width={160} />
+                    <Tooltip content={<NewsprintTooltip />} cursor={{ fill: '#ebe1cf' }} />
+                    <Bar dataKey="count" fill="#588157" radius={[0,3,3,0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Monday morning actions */}
+            {finalSubs.filter(s => s.next_action).length > 0 && (
+              <>
+                <span className="eyebrow">What gets done Monday morning</span>
+                <div style={{ marginTop: 10, marginBottom: 16 }}>
+                  {finalSubs.filter(s => s.next_action).map((s,i) => (
+                    <div key={i} className="quote-card" style={{ borderLeftColor: 'var(--accent-2)' }}>
+                      <p style={{ fontSize: 15 }}>{s.next_action}</p>
+                      <p className="small" style={{ marginTop: 4 }}>· {s.role || 'Unknown'}{s.seniority ? ` · ${s.seniority}` : ''}</p>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* Improvements */}
+            {finalSubs.filter(s => s.improve).length > 0 && (
+              <>
+                <span className="eyebrow">What to improve next time</span>
+                <div style={{ marginTop: 10 }}>
+                  {finalSubs.filter(s => s.improve).map((s,i) => (
+                    <div key={i} className="quote-card" style={{ borderLeftColor: 'var(--gold)' }}>
+                      <p style={{ fontSize: 15 }}>{s.improve}</p>
+                      <p className="small" style={{ marginTop: 4 }}>· {s.role || 'Unknown'}{s.seniority ? ` · ${s.seniority}` : ''}</p>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })()}
+      {/* === END WRAP-UP TAB === */}
 
       {/* === PROJECT TAB === */}
       {tab === 'project' && projectSubs.length > 0 && (() => {
