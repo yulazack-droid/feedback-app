@@ -1187,7 +1187,7 @@ function AdminPage() {
         <span className="eyebrow">Drill into a session</span>
         <select className="select" style={{ marginTop: 12, marginBottom: 16 }} value={filter} onChange={e => setFilter(e.target.value)}>
           <option value="all">All sessions</option>
-          {LECTURES.map(l => <option key={l.id} value={l.id}>{l.title} — {l.speaker}</option>)}
+          {LECTURES.filter(l => l.type !== 'Project').map(l => <option key={l.id} value={l.id}>{l.title} — {l.speaker}</option>)}
         </select>
         {filter !== 'all' && !drillDown && <p className="small">No responses yet for this session.</p>}
         {filter !== 'all' && drillDown && (() => {
