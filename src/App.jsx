@@ -7,6 +7,7 @@ import {
 import {
   insertLectureFeedback, insertFinalFeedback, insertProjectFeedback,
   fetchLectureFeedback, fetchFinalFeedback, fetchProjectFeedback,
+  fetchReportNotes, saveReportNotesRemote,
 } from './supabase.js';
 
 const LECTURES = [
@@ -33,6 +34,11 @@ const ADMIN_PIN   = import.meta.env.VITE_ADMIN_PIN || '7777';
 
 function loadProfileLocal() { try { return JSON.parse(localStorage.getItem(PROFILE_KEY) || 'null'); } catch { return null; } }
 function saveProfileLocal(p) { try { localStorage.setItem(PROFILE_KEY, JSON.stringify(p)); } catch {} }
+
+// Report editorial notes — persisted locally in the host's browser
+const REPORT_NOTES_KEY = 'feedback:reportNotes';
+function loadReportNotes() { try { return JSON.parse(localStorage.getItem(REPORT_NOTES_KEY) || '{}'); } catch { return {}; } }
+function saveReportNotes(n) { try { localStorage.setItem(REPORT_NOTES_KEY, JSON.stringify(n)); } catch {} }
 
 function parseHash() {
   const h = (window.location.hash || '').replace(/^#/, '');
@@ -118,7 +124,30 @@ const STYLES = `
                   border-top: 1.5px dashed var(--ink); }
   .brand-footer-text { font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; color: var(--ink-soft); font-weight: 700; }
   .brand-footer-tag { font-family: 'Caveat', cursive; font-size: 18px; color: var(--scopely); margin-top: 2px; }
-  @media print { body::before { display: none; } .btn, .toolbar, .brand-bar { display: none !important; } .card { box-shadow: none; page-break-inside: avoid; } }
+  .report-section { margin-bottom: 28px; }
+  .report-h2 { font-family: 'Frank Ruhl Libre', Georgia, serif; font-size: 24px; font-weight: 700; margin-bottom: 4px; padding-bottom: 8px; border-bottom: 2px solid var(--ink); }
+  .report-lead { font-size: 15px; line-height: 1.6; color: var(--ink-soft); margin: 12px 0; }
+  .report-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin: 16px 0; }
+  .report-stat { text-align: center; padding: 16px 10px; background: var(--cream-2); border: 1.5px solid var(--ink); }
+  .report-stat .num { font-family: 'Frank Ruhl Libre', Georgia, serif; font-size: 32px; font-weight: 700; line-height: 1; }
+  .report-stat .lbl { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-soft); margin-top: 6px; }
+  .report-item { padding: 12px 0; border-bottom: 1px dashed var(--ink); }
+  .report-rec { background: var(--cream-2); border-inline-start: 4px solid var(--scopely); padding: 12px 16px; margin-bottom: 10px; }
+  .note-box { width: 100%; min-height: 70px; padding: 12px 14px; border: 1.5px dashed var(--scopely); background: rgba(30,144,255,0.04); font-family: inherit; font-size: 15px; line-height: 1.5; color: var(--ink); resize: vertical; margin-top: 8px; }
+  .note-box:focus { outline: none; border-style: solid; background: rgba(30,144,255,0.07); }
+  .note-label { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--scopely); font-weight: 700; }
+  .note-rendered { font-size: 15px; line-height: 1.6; white-space: pre-wrap; }
+  @media print {
+    .note-box { border: none !important; background: transparent !important; padding: 0 !important; }
+    .note-label { display: none !important; }
+    .note-empty-print { display: none !important; }
+  }
+  @media print {
+    body::before { display: none; }
+    .btn, .toolbar, .brand-bar, .tab-bar { display: none !important; }
+    .card { box-shadow: none; page-break-inside: avoid; }
+    .report-section { page-break-inside: avoid; }
+  }
 `;
 function StyleInjector() {
   useEffect(() => {
@@ -739,6 +768,40 @@ function NewsprintTooltip({ active, payload, label }) {
   );
 }
 
+// Custom Y-axis tick that wraps long category labels into multiple lines
+function WrappedTick({ x, y, payload, width = 150 }) {
+  const text = String(payload.value || '');
+  // Approx chars that fit per line based on width (~6.5px per char at 11px font)
+  const charsPerLine = Math.floor(width / 6.2);
+  const words = text.split(' ');
+  const lines = [];
+  let current = '';
+  for (const word of words) {
+    if ((current + ' ' + word).trim().length <= charsPerLine) {
+      current = (current + ' ' + word).trim();
+    } else {
+      if (current) lines.push(current);
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+  // Limit to 3 lines max, add ellipsis if more
+  const maxLines = 3;
+  const shown = lines.slice(0, maxLines);
+  if (lines.length > maxLines) shown[maxLines - 1] = shown[maxLines - 1].replace(/…?$/, '…');
+  const lineHeight = 12;
+  const startY = y - ((shown.length - 1) * lineHeight) / 2;
+  return (
+    <g>
+      {shown.map((line, i) => (
+        <text key={i} x={x} y={startY + i * lineHeight} textAnchor="end" fill="#1a1715" fontSize={11} dominantBaseline="middle">
+          {line}
+        </text>
+      ))}
+    </g>
+  );
+}
+
 // Compute analytics for a single lecture
 function analyzeLecture(submissions, lectureId) {
   const subs = submissions.filter(s => s.lecture_id === lectureId);
@@ -765,7 +828,7 @@ function analyzeLecture(submissions, lectureId) {
     byRole[r].count++; byRole[r].sum += s.rating; byRole[r].ratings.push(s.rating);
   }
   const roleChart = Object.entries(byRole).map(([role, v]) => ({
-    role: role.length > 14 ? role.slice(0, 12) + '…' : role,
+    role: role,
     avg: +(v.sum / v.count).toFixed(2),
     count: v.count,
   })).sort((a,b) => b.avg - a.avg);
@@ -802,7 +865,7 @@ function analyzeLecture(submissions, lectureId) {
     }
   }
   const takeawayChart = Object.entries(takeawayStats)
-    .map(([t, v]) => ({ takeaway: t.length > 36 ? t.slice(0, 34) + '…' : t, count: v.count, avg: +(v.sum/v.count).toFixed(2) }))
+    .map(([t, v]) => ({ takeaway: t, count: v.count, avg: +(v.sum/v.count).toFixed(2) }))
     .sort((a,b) => b.count - a.count);
 
   // Comments
@@ -918,6 +981,17 @@ function AdminPage() {
   const [lastRefresh, setLastRefresh] = useState(null);
   const [tab, setTab] = useState('overview'); // overview | session | voices | project
   const [voicesFilter, setVoicesFilter] = useState({ session: 'all', rating: 'all', role: 'all' });
+  const [reportNotes, setReportNotes] = useState({});
+  const notesSaveTimer = useRef(null);
+  const updateNote = (key, value) => {
+    const next = { ...reportNotes, [key]: value };
+    setReportNotes(next);
+    // Debounce remote save by 800ms so we don't write on every keystroke
+    if (notesSaveTimer.current) clearTimeout(notesSaveTimer.current);
+    notesSaveTimer.current = setTimeout(() => {
+      saveReportNotesRemote(next).catch(e => console.error('Failed to save notes:', e));
+    }, 800);
+  };
 
   const refresh = async () => {
     setLoading(true);
@@ -928,6 +1002,12 @@ function AdminPage() {
     } finally { setLoading(false); }
   };
   useEffect(() => { if (authed) refresh(); }, [authed]);
+
+  // Load report notes once when authenticated (not on every refresh, to avoid clobbering typing)
+  useEffect(() => {
+    if (!authed) return;
+    fetchReportNotes().then(n => setReportNotes(n || {})).catch(e => console.error('Failed to load notes:', e));
+  }, [authed]);
 
   // Auto-refresh every 30 seconds + when tab regains focus
   useEffect(() => {
@@ -1041,6 +1121,7 @@ function AdminPage() {
       {/* TAB BAR */}
       <div className="tab-bar anim">
         <button className={`tab-btn ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>Overview</button>
+        <button className={`tab-btn ${tab === 'report' ? 'active' : ''}`} onClick={() => setTab('report')}>Report</button>
         <button className={`tab-btn ${tab === 'session' ? 'active' : ''}`} onClick={() => setTab('session')}>Per session</button>
         <button className={`tab-btn ${tab === 'voices' ? 'active' : ''}`} onClick={() => setTab('voices')}>
           Voices
@@ -1187,6 +1268,254 @@ function AdminPage() {
       </>)}
       {/* === END OVERVIEW TAB === */}
 
+      {/* === REPORT TAB === */}
+      {tab === 'report' && (() => {
+        if (!onsite) return <p className="small">No data yet to build a report.</p>;
+
+        const totalResponses = submissions.length;
+        const uniqueRoles = [...new Set(submissions.map(s => s.role || 'Unknown'))];
+        const onsiteAvg = overall.avg;
+        const top3 = onsite.league.slice(0, 3);
+        const bottom3 = onsite.league.slice(-3).reverse();
+        const lectureCount = onsite.league.length;
+
+        // Auto insights across the whole onsite
+        const autoInsights = [];
+
+        // 1. Talks vs Workshops
+        const talks = onsite.league.filter(l => l.type === 'Talk');
+        const workshops = onsite.league.filter(l => l.type === 'Workshop');
+        if (talks.length && workshops.length) {
+          const talkAvg = talks.reduce((a,l) => a+l.avg, 0) / talks.length;
+          const wsAvg = workshops.reduce((a,l) => a+l.avg, 0) / workshops.length;
+          if (Math.abs(talkAvg - wsAvg) >= 0.3) {
+            const winner = talkAvg > wsAvg ? 'Talks' : 'Workshops';
+            autoInsights.push({
+              label: 'Format matters',
+              text: `${winner} outperformed the other format (Talks ⌀${talkAvg.toFixed(2)} vs Workshops ⌀${wsAvg.toFixed(2)}). Consider the balance for next time.`
+            });
+          }
+        }
+
+        // 2. Most polarizing session
+        const mostPolarizing = [...onsite.league].sort((a,b) => b.stdDev - a.stdDev)[0];
+        if (mostPolarizing && mostPolarizing.stdDev > 1.0) {
+          autoInsights.push({
+            label: 'Most divisive',
+            text: `"${mostPolarizing.title}" split the room the most (σ=${mostPolarizing.stdDev}). Different roles experienced it very differently.`
+          });
+        }
+
+        // 3. Day comparison
+        const day1 = onsite.league.filter(l => l.day === 1);
+        const day2 = onsite.league.filter(l => l.day === 2);
+        if (day1.length && day2.length) {
+          const d1Avg = day1.reduce((a,l) => a+l.avg, 0) / day1.length;
+          const d2Avg = day2.reduce((a,l) => a+l.avg, 0) / day2.length;
+          if (Math.abs(d1Avg - d2Avg) >= 0.25) {
+            autoInsights.push({
+              label: 'Day rhythm',
+              text: `Day ${d1Avg > d2Avg ? '1' : '2'} rated higher overall (Day 1 ⌀${d1Avg.toFixed(2)} vs Day 2 ⌀${d2Avg.toFixed(2)}).`
+            });
+          }
+        }
+
+        // 4. Heatmap-based: role that's hardest to please
+        if (onsite.roles.length > 1) {
+          const roleAverages = onsite.roles.map(role => {
+            const vals = onsite.heatmap.map(row => row[role]).filter(v => v !== null && v !== undefined);
+            return { role, avg: vals.length ? vals.reduce((a,b) => a+b, 0) / vals.length : null };
+          }).filter(r => r.avg !== null);
+          if (roleAverages.length > 1) {
+            roleAverages.sort((a,b) => a.avg - b.avg);
+            const hardest = roleAverages[0], easiest = roleAverages[roleAverages.length-1];
+            if (easiest.avg - hardest.avg >= 0.5) {
+              autoInsights.push({
+                label: 'Audience fit',
+                text: `${easiest.role} were the most satisfied audience (⌀${easiest.avg.toFixed(2)}), while ${hardest.role} were the toughest crowd (⌀${hardest.avg.toFixed(2)}).`
+              });
+            }
+          }
+        }
+
+        // 5. Project transfer insight
+        let projectInsight = null;
+        if (projectSubs.length) {
+          const stepKeys = ['step_trend', 'step_adapt', 'step_ai', 'step_kpi', 'step_integrate'];
+          const stepLabels = ['finding a trend', 'adapting to their game', 'AI for art/copy', 'defining KPIs', 'integration'];
+          const stepAvgs = stepKeys.map((k, i) => {
+            const vals = projectSubs.map(s => s[k]).filter(v => typeof v === 'number');
+            return { label: stepLabels[i], avg: vals.length ? vals.reduce((a,b) => a+b, 0) / vals.length : null };
+          }).filter(s => s.avg !== null);
+          if (stepAvgs.length) {
+            stepAvgs.sort((a,b) => a.avg - b.avg);
+            const weakest = stepAvgs[0], strongest = stepAvgs[stepAvgs.length-1];
+            projectInsight = `In the hands-on project, attendees felt most equipped at ${strongest.label} (⌀${strongest.avg.toFixed(1)}) and least equipped at ${weakest.label} (⌀${weakest.avg.toFixed(1)}) — a signal of where the teaching transferred into capability, and where it didn't.`;
+          }
+        }
+
+        // Recommendations (auto-generated)
+        const recommendations = [];
+        if (bottom3.length) {
+          recommendations.push(`Revisit the format or framing of "${bottom3[0].title}" (lowest rated at ⌀${bottom3[0].avg}). Read its open comments in the Per session tab for specifics.`);
+        }
+        if (mostPolarizing && mostPolarizing.stdDev > 1.0) {
+          recommendations.push(`"${mostPolarizing.title}" divided the room — consider segmenting it by experience level or offering parallel tracks.`);
+        }
+        if (projectInsight) {
+          recommendations.push(`Strengthen the weakest project step next time with more hands-on practice before the project session.`);
+        }
+        recommendations.push(`Keep the top performers ("${top3.map(l => l.title.length > 24 ? l.title.slice(0,22)+'…' : l.title).join('", "')}") as anchor sessions.`);
+
+        // Selected quotes
+        const allComments = submissions.filter(s => s.comment).sort((a,b) => b.rating - a.rating);
+        const topQuotes = allComments.slice(0, 2);
+        const critiqueQuotes = allComments.filter(s => s.rating <= 3).slice(0, 1);
+        const wrapNext = finalSubs.filter(s => s.next_action).slice(0, 2);
+
+        return (
+          <div className="card anim" style={{ marginBottom: 24 }}>
+            {/* Print button */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+              <span className="small" style={{ color: 'var(--ink-soft)' }}>💡 Add your own commentary in the dashed boxes — it saves automatically and appears in the PDF.</span>
+              <button className="btn btn-ghost" onClick={() => window.print()} style={{ whiteSpace: 'nowrap' }}>🖨 Save as PDF</button>
+            </div>
+            <p className="small" style={{ marginBottom: 16, color: 'var(--ink-soft)', fontStyle: 'italic' }}>
+              When the print dialog opens, choose "Save as PDF" as the destination.
+            </p>
+
+            {/* Title */}
+            <div style={{ textAlign: 'center', marginBottom: 32, paddingBottom: 20, borderBottom: '3px double var(--ink)' }}>
+              <p className="eyebrow" style={{ color: 'var(--scopely)' }}>Scopely · Community Onsite</p>
+              <h1 className="display" style={{ fontSize: 38, margin: '8px 0' }}>Onsite Impact Report</h1>
+              <p className="hand" style={{ fontSize: 22, color: 'var(--accent)' }}>What worked, what we learned, what's next</p>
+            </div>
+
+            {/* 1. Executive summary */}
+            <div className="report-section">
+              <h2 className="report-h2">Executive summary</h2>
+              <div className="report-stat-grid">
+                <div className="report-stat"><div className="num">{lectureCount}</div><div className="lbl">Sessions rated</div></div>
+                <div className="report-stat"><div className="num">{totalResponses}</div><div className="lbl">Feedback entries</div></div>
+                <div className="report-stat"><div className="num" style={{ color: 'var(--scopely)' }}>{onsiteAvg}</div><div className="lbl">Avg rating</div></div>
+                <div className="report-stat"><div className="num">{finalSubs.length}</div><div className="lbl">Wrap-up surveys</div></div>
+                {projectSubs.length > 0 && <div className="report-stat"><div className="num">{projectSubs.length}</div><div className="lbl">Project responses</div></div>}
+              </div>
+              <p className="report-lead">
+                Across {lectureCount} sessions over two days, the onsite gathered {totalResponses} pieces of session feedback from {uniqueRoles.length} different roles, landing an overall average of {onsiteAvg}/5.
+                {Number(onsiteAvg) >= 4 ? ' This reflects a strongly positive reception across the program.' : Number(onsiteAvg) >= 3.5 ? ' This reflects a solidly positive reception with clear areas to sharpen.' : ' This points to meaningful opportunities to refine the program.'}
+                {finalSubs.length > 0 && ` ${finalSubs.length} participants completed the full wrap-up survey, rating their overall experience at ${overall.avgOverall}/5.`}
+              </p>
+              <span className="note-label">✍️ Your summary note</span>
+              <textarea className="note-box" value={reportNotes.summary || ''}
+                onChange={e => updateNote('summary', e.target.value)}
+                placeholder="Add your own framing for leadership — the story behind the numbers, context, or the headline you want them to walk away with..." />
+            </div>
+
+            {/* 2. What worked */}
+            <div className="report-section">
+              <h2 className="report-h2">What worked</h2>
+              <p className="report-lead">The three highest-rated sessions of the onsite:</p>
+              {top3.map((l, i) => (
+                <div key={l.id} className="report-item">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <span><strong style={{ color: 'var(--scopely)', fontSize: 18 }}>#{i+1}</strong> <span className="serif" style={{ fontSize: 17, fontWeight: 700 }}>{l.title}</span></span>
+                    <span className="stat-num" style={{ fontSize: 22, color: 'var(--scopely)' }}>{l.avg}</span>
+                  </div>
+                  <p className="small" style={{ marginTop: 4 }}>{l.speaker} · {l.count} responses · consistency σ {l.stdDev} {l.stdDev < 0.6 ? '(very consistent)' : ''}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* 3. Opportunities */}
+            <div className="report-section">
+              <h2 className="report-h2">Opportunities to sharpen</h2>
+              <p className="report-lead">Sessions with the most room to grow — framed as opportunities, not failures:</p>
+              {bottom3.map((l) => (
+                <div key={l.id} className="report-item">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <span className="serif" style={{ fontSize: 17, fontWeight: 700 }}>{l.title}</span>
+                    <span className="stat-num" style={{ fontSize: 22, color: 'var(--accent)' }}>{l.avg}</span>
+                  </div>
+                  <p className="small" style={{ marginTop: 4 }}>{l.speaker} · {l.count} responses · σ {l.stdDev} {l.stdDev > 1.2 ? '(highly mixed reactions)' : ''}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* 4. Interesting insights */}
+            <div className="report-section">
+              <h2 className="report-h2">Interesting insights</h2>
+              {autoInsights.map((ins, i) => (
+                <div key={i} className="insight-card">
+                  <div className="label">{ins.label}</div>
+                  <div className="text">{ins.text}</div>
+                </div>
+              ))}
+              <span className="note-label">✍️ Your insights</span>
+              <textarea className="note-box" value={reportNotes.insights || ''}
+                onChange={e => updateNote('insights', e.target.value)}
+                placeholder="What patterns did you notice that the numbers don't capture? The energy in the room, a surprising reaction, a theme across the comments..." />
+            </div>
+
+            {/* 5. Project / learning transfer */}
+            {projectInsight && (
+              <div className="report-section">
+                <h2 className="report-h2">Did the learning transfer?</h2>
+                <p className="report-lead">{projectInsight}</p>
+                <textarea className="note-box" value={reportNotes.project || ''}
+                  onChange={e => updateNote('project', e.target.value)}
+                  placeholder="Your read on whether the content turned into real capability during the project..." />
+              </div>
+            )}
+
+            {/* 6. Voice of participants */}
+            {(topQuotes.length > 0 || wrapNext.length > 0) && (
+              <div className="report-section">
+                <h2 className="report-h2">Voice of the participants</h2>
+                {topQuotes.map((q, i) => (
+                  <div key={i} className="quote-card" style={{ borderLeftColor: 'var(--accent-2)' }}>
+                    <p style={{ fontSize: 15, fontStyle: 'italic' }}>"{q.comment}"</p>
+                    <p className="small" style={{ marginTop: 4 }}>— {q.role || 'Participant'}{q.seniority ? `, ${q.seniority}` : ''}</p>
+                  </div>
+                ))}
+                {critiqueQuotes.map((q, i) => (
+                  <div key={`c${i}`} className="quote-card" style={{ borderLeftColor: 'var(--accent)' }}>
+                    <p style={{ fontSize: 15, fontStyle: 'italic' }}>"{q.comment}"</p>
+                    <p className="small" style={{ marginTop: 4 }}>— {q.role || 'Participant'}{q.seniority ? `, ${q.seniority}` : ''}</p>
+                  </div>
+                ))}
+                {wrapNext.map((q, i) => (
+                  <div key={`w${i}`} className="quote-card" style={{ borderLeftColor: 'var(--scopely)' }}>
+                    <p style={{ fontSize: 15, fontStyle: 'italic' }}>"{q.next_action}"</p>
+                    <p className="small" style={{ marginTop: 4 }}>— {q.role || 'Participant'} · on what they'll do back at work</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* 7. Recommendations */}
+            <div className="report-section">
+              <h2 className="report-h2">Recommendations for next time</h2>
+              <p className="report-lead">Data-driven starting points:</p>
+              {recommendations.map((rec, i) => (
+                <div key={i} className="report-rec">
+                  <p style={{ fontSize: 15 }}><strong>{i+1}.</strong> {rec}</p>
+                </div>
+              ))}
+              <span className="note-label">✍️ Your recommendations</span>
+              <textarea className="note-box" value={reportNotes.recommendations || ''}
+                onChange={e => updateNote('recommendations', e.target.value)}
+                placeholder="Your own action items for the next onsite — logistics, content, format, anything you'd change..." />
+            </div>
+
+            <p className="small" style={{ textAlign: 'center', marginTop: 24, color: 'var(--ink-soft)' }}>
+              Generated from {totalResponses} session responses{finalSubs.length ? `, ${finalSubs.length} wrap-up surveys` : ''}{projectSubs.length ? `, ${projectSubs.length} project responses` : ''} · Scopely Community Onsite
+            </p>
+          </div>
+        );
+      })()}
+      {/* === END REPORT TAB === */}
+
       {/* === PER SESSION TAB === */}
       {tab === 'session' && (
       <div className="card anim" style={{ marginBottom: 24 }}>
@@ -1248,7 +1577,7 @@ function AdminPage() {
                     <BarChart data={drillDown.roleChart} layout="vertical" margin={{ top: 5, right: 30, left: 100, bottom: 5 }}>
                       <CartesianGrid stroke="#1a1715" strokeOpacity={0.1} horizontal={false} />
                       <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 11, fill: '#4a423c' }} />
-                      <YAxis dataKey="role" type="category" tick={{ fontSize: 11, fill: '#1a1715' }} width={100} />
+                      <YAxis dataKey="role" type="category" tick={<WrappedTick width={110} />} width={120} />
                       <Tooltip content={<NewsprintTooltip />} cursor={{ fill: '#ebe1cf' }} />
                       <Bar dataKey="avg" fill="#1a1715" radius={[0,3,3,0]} />
                     </BarChart>
@@ -1293,11 +1622,11 @@ function AdminPage() {
               {drillDown.takeawayChart.length > 0 && (
                 <div className="chart-card">
                   <div className="chart-title">Takeaways (count + avg rating of those who picked it)</div>
-                  <ResponsiveContainer width="100%" height={Math.max(180, drillDown.takeawayChart.length * 40)}>
-                    <BarChart data={drillDown.takeawayChart} layout="vertical" margin={{ top: 5, right: 30, left: 160, bottom: 5 }}>
+                  <ResponsiveContainer width="100%" height={Math.max(200, drillDown.takeawayChart.length * 52)}>
+                    <BarChart data={drillDown.takeawayChart} layout="vertical" margin={{ top: 5, right: 30, left: 180, bottom: 5 }}>
                       <CartesianGrid stroke="#1a1715" strokeOpacity={0.1} horizontal={false} />
                       <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: '#4a423c' }} />
-                      <YAxis dataKey="takeaway" type="category" tick={{ fontSize: 10, fill: '#1a1715' }} width={160} />
+                      <YAxis dataKey="takeaway" type="category" tick={<WrappedTick width={175} />} width={185} />
                       <Tooltip content={<NewsprintTooltip />} cursor={{ fill: '#ebe1cf' }} />
                       <Bar dataKey="count" fill="#c8553d" radius={[0,3,3,0]} />
                     </BarChart>
@@ -1489,7 +1818,7 @@ function AdminPage() {
         const meaningfulChart = Object.entries(meaningfulCounts)
           .map(([id, count]) => {
             const lec = LECTURES.find(l => l.id === id);
-            return { name: lec ? (lec.title.length > 30 ? lec.title.slice(0,28)+'…' : lec.title) : id, count };
+            return { name: lec ? lec.title : id, count };
           })
           .sort((a,b) => b.count - a.count);
 
@@ -1497,7 +1826,7 @@ function AdminPage() {
         const growthCounts = {};
         for (const s of finalSubs) for (const g of (s.growth || [])) growthCounts[g] = (growthCounts[g] || 0) + 1;
         const growthChart = Object.entries(growthCounts)
-          .map(([area, count]) => ({ area: area.length > 36 ? area.slice(0,34)+'…' : area, count }))
+          .map(([area, count]) => ({ area, count }))
           .sort((a,b) => b.count - a.count);
 
         return (
@@ -1517,11 +1846,11 @@ function AdminPage() {
             {meaningfulChart.length > 0 && (
               <div className="chart-card">
                 <div className="chart-title">Most meaningful session</div>
-                <ResponsiveContainer width="100%" height={Math.max(160, meaningfulChart.length * 38)}>
-                  <BarChart data={meaningfulChart} layout="vertical" margin={{ top: 5, right: 30, left: 150, bottom: 5 }}>
+                <ResponsiveContainer width="100%" height={Math.max(180, meaningfulChart.length * 52)}>
+                  <BarChart data={meaningfulChart} layout="vertical" margin={{ top: 5, right: 30, left: 180, bottom: 5 }}>
                     <CartesianGrid stroke="#1a1715" strokeOpacity={0.1} horizontal={false} />
                     <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: '#4a423c' }} />
-                    <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: '#1a1715' }} width={150} />
+                    <YAxis dataKey="name" type="category" tick={<WrappedTick width={175} />} width={185} />
                     <Tooltip content={<NewsprintTooltip />} cursor={{ fill: '#ebe1cf' }} />
                     <Bar dataKey="count" fill="#1e90ff" radius={[0,3,3,0]} />
                   </BarChart>
@@ -1533,11 +1862,11 @@ function AdminPage() {
             {growthChart.length > 0 && (
               <div className="chart-card">
                 <div className="chart-title">Where people feel they grew</div>
-                <ResponsiveContainer width="100%" height={Math.max(160, growthChart.length * 40)}>
-                  <BarChart data={growthChart} layout="vertical" margin={{ top: 5, right: 30, left: 160, bottom: 5 }}>
+                <ResponsiveContainer width="100%" height={Math.max(180, growthChart.length * 52)}>
+                  <BarChart data={growthChart} layout="vertical" margin={{ top: 5, right: 30, left: 180, bottom: 5 }}>
                     <CartesianGrid stroke="#1a1715" strokeOpacity={0.1} horizontal={false} />
                     <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: '#4a423c' }} />
-                    <YAxis dataKey="area" type="category" tick={{ fontSize: 10, fill: '#1a1715' }} width={160} />
+                    <YAxis dataKey="area" type="category" tick={<WrappedTick width={175} />} width={185} />
                     <Tooltip content={<NewsprintTooltip />} cursor={{ fill: '#ebe1cf' }} />
                     <Bar dataKey="count" fill="#588157" radius={[0,3,3,0]} />
                   </BarChart>
