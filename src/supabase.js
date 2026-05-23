@@ -51,3 +51,21 @@ export async function fetchProjectFeedback() {
   if (error) { console.error(error); return []; }
   return data || [];
 }
+
+// --- Report editorial notes (single global row) -----------------------------
+export async function fetchReportNotes() {
+  const { data, error } = await supabase
+    .from('report_notes')
+    .select('notes')
+    .eq('id', 1)
+    .maybeSingle();
+  if (error) { console.error(error); return {}; }
+  return (data && data.notes) || {};
+}
+
+export async function saveReportNotesRemote(notes) {
+  const { error } = await supabase
+    .from('report_notes')
+    .upsert({ id: 1, notes, updated_at: new Date().toISOString() });
+  if (error) throw error;
+}
