@@ -10,6 +10,30 @@ import {
   fetchReportNotes, saveReportNotesRemote,
 } from './supabase.js';
 
+// Onsite context — from the opening keynote deck
+const DECK_URL = 'https://communitysummit2026.netlify.app/';
+const ONSITE_GOALS = [
+  { title: "A toolkit you'll actually open on Monday", text: "Not theory. Real tools, real workflows, real prompts you can use the moment you get back to your game." },
+  { title: 'Permission to think bigger than your brief', text: 'No "but my game is different." No invisible ceiling. The ideas that scared you yesterday become the ones you ship next month.' },
+  { title: 'Hunger to become the new generation of CMs', text: 'Who hunts, not waits. Builds, not executes. Owns, not manages — always eager for the next challenge.' },
+];
+const ONSITE_AGENDA = [
+  { day: 1, theme: 'Trends · AI · Mindset', items: [
+    { time: '10:00', name: 'So Why Are We All Here? — Goals & Welcome' },
+    { time: '10:30', name: "Trends School: No, You Can't Skip This One" },
+    { time: '11:00', name: 'Spot the Trend — workshop' },
+    { time: '11:45', name: 'Steal Like a CM — Adapting Trends' },
+    { time: '12:15', name: 'AI Workshop' },
+    { time: '16:30', name: "Meet Your New Intern — It's an AI" },
+  ]},
+  { day: 2, theme: 'Creators · Data · Build', items: [
+    { time: '10:00', name: 'TikTok or Flop: Making Your Game Go Viral' },
+    { time: '10:45', name: 'How the Pros Do It — Lessons from Supercell' },
+    { time: '11:45', name: "Numbers Don't Lie — KPIs & Storytelling" },
+    { time: '13:45', name: 'Project Time — Take What You Learned & Make It Real' },
+  ]},
+];
+
 const LECTURES = [
   // Day 1
   { id: 'd1-s1',  day: 1, title: '"So Why Are We All Here?" — Goals & Welcome',                  speaker: 'Yula Zack',             type: 'Talk' },
@@ -1389,6 +1413,43 @@ function AdminPage() {
               <p className="eyebrow" style={{ color: 'var(--scopely)' }}>Scopely · Community Onsite</p>
               <h1 className="display" style={{ fontSize: 38, margin: '8px 0' }}>Onsite Impact Report</h1>
               <p className="hand" style={{ fontSize: 22, color: 'var(--accent)' }}>What worked, what we learned, what's next</p>
+              <a href={DECK_URL} target="_blank" rel="noopener noreferrer" className="btn btn-ghost" style={{ marginTop: 14, fontSize: 13, textDecoration: 'none', display: 'inline-block' }}>
+                📊 View the opening keynote deck
+              </a>
+            </div>
+
+            {/* 0a. Why we gathered — goals */}
+            <div className="report-section">
+              <h2 className="report-h2">Why we gathered</h2>
+              <p className="report-lead">
+                This was Scopely's first Community Manager onsite — built around one shift: from the classic CM who posts announcements and waits for the brief, to the new generation who hunts opportunities, builds end-to-end with AI, and owns the call. Three goals defined what every participant should walk out with:
+              </p>
+              {ONSITE_GOALS.map((g, i) => (
+                <div key={i} className="report-item">
+                  <p className="serif" style={{ fontSize: 16, fontWeight: 700 }}>
+                    <span style={{ color: 'var(--scopely)' }}>{['i', 'ii', 'iii'][i]}.</span> {g.title}
+                  </p>
+                  <p className="small" style={{ marginTop: 4 }}>{g.text}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* 0b. Agenda */}
+            <div className="report-section">
+              <h2 className="report-h2">The two-day agenda</h2>
+              {ONSITE_AGENDA.map(d => (
+                <div key={d.day} style={{ marginBottom: 16 }}>
+                  <p className="serif" style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
+                    Day {d.day} <span className="hand" style={{ fontSize: 18, color: 'var(--accent)' }}>· {d.theme}</span>
+                  </p>
+                  {d.items.map((item, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 14, padding: '5px 0', borderBottom: '1px dashed var(--cream-2)' }}>
+                      <span className="small" style={{ minWidth: 44, fontWeight: 700, color: 'var(--scopely)' }}>{item.time}</span>
+                      <span style={{ fontSize: 14 }}>{item.name}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
             </div>
 
             {/* 1. Executive summary */}
