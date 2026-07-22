@@ -69,3 +69,18 @@ export async function saveReportNotesRemote(notes) {
     .upsert({ id: 1, notes, updated_at: new Date().toISOString() });
   if (error) throw error;
 }
+
+// --- Mid-year review feedback -----------------------------------------------
+export async function insertMidyearFeedback(row) {
+  const { error } = await supabase.from('midyear_feedback').insert(row);
+  if (error) throw error;
+}
+
+export async function fetchMidyearFeedback() {
+  const { data, error } = await supabase
+    .from('midyear_feedback')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) { console.error(error); return []; }
+  return data || [];
+}
