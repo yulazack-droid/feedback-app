@@ -14,7 +14,7 @@ import {
 // Onsite context — from the opening keynote deck
 const DECK_URL = 'https://communitysummit2026.netlify.app/';
 const ONSITE_GOALS = [
-  { title: "A toolkit you'll actually open on Monday", text: "Not theory. Real toolשs, real workflows, real prompts you can use the moment you get back to your game." },
+  { title: "A toolkit you'll actually open on Monday", text: "Not theory. Real tools, real workflows, real prompts you can use the moment you get back to your game." },
   { title: 'Permission to think bigger than your brief', text: 'No "but my game is different." No invisible ceiling. The ideas that scared you yesterday become the ones you ship next month.' },
   { title: 'Hunger to become the new generation of CMs', text: 'Who hunts, not waits. Builds, not executes. Owns, not manages — always eager for the next challenge.' },
 ];
@@ -1087,9 +1087,19 @@ function MidyearPage() {
   const setMoreFor = (key, val) => setMore({ ...more, [key]: val });
   const toggleFormat = (fmt) => setFormats(formats.includes(fmt) ? formats.filter(f => f !== fmt) : [...formats, fmt]);
 
-  // Require at least the first two session ratings to enable submit
-  const requiredKeys = ['across', 'ai'];
-  const canSubmit = requiredKeys.every(k => ratings[k]);
+  // All questions mandatory except free-text topics
+  const allRated = MIDYEAR_SESSIONS.every(s => ratings[s.key]);
+  const allMoreAnswered = MIDYEAR_SESSIONS.every(s => more[s.key]);
+  const hasFormat = formats.length > 0;
+  const hasFreq = !!frequency;
+  const canSubmit = allRated && allMoreAnswered && hasFormat && hasFreq;
+
+  // Which question is missing? (for the helper message)
+  const missingReason = !allRated ? 'Rate every session'
+    : !allMoreAnswered ? 'Answer "want more?" for every session'
+    : !hasFormat ? 'Pick at least one preferred format'
+    : !hasFreq ? 'Pick a frequency'
+    : null;
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -1220,7 +1230,7 @@ function MidyearPage() {
       </button>
       {!canSubmit && !submitting && (
         <p className="small" style={{ marginTop: 8, textAlign: 'center', color: 'var(--ink-soft)' }}>
-          Rate at least the first two sessions to submit
+          {missingReason} to submit
         </p>
       )}
     </>
