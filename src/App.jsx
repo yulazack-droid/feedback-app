@@ -51,9 +51,6 @@ const MIDYEAR_SESSIONS = [
   { key: 'across',   title: 'Across the industry',        speaker: 'Rachel Blennerhassett', group: 'sessions' },
   { key: 'ai',       title: 'AI workshop',                speaker: 'Daniel Geron',          group: 'sessions' },
   { key: 'bingo',    title: 'Bingo',                      speaker: null,                    group: 'stories'  },
-  { key: 'scrabble', title: 'Scrabble',                   speaker: null,                    group: 'stories'  },
-  { key: 'stumble',  title: 'Stumble Guys',               speaker: null,                    group: 'stories'  },
-  { key: 'yahtzee',  title: 'Yahtzee',                    speaker: null,                    group: 'stories'  },
   { key: 'startrek', title: 'Star Trek Fleet Command',    speaker: null,                    group: 'stories'  },
 ];
 
@@ -1109,9 +1106,6 @@ function MidyearPage() {
         rating_across: ratings.across || null, more_across: more.across || null,
         rating_ai: ratings.ai || null, more_ai: more.ai || null,
         rating_bingo: ratings.bingo || null, more_bingo: more.bingo || null,
-        rating_scrabble: ratings.scrabble || null, more_scrabble: more.scrabble || null,
-        rating_stumble: ratings.stumble || null, more_stumble: more.stumble || null,
-        rating_yahtzee: ratings.yahtzee || null, more_yahtzee: more.yahtzee || null,
         rating_startrek: ratings.startrek || null, more_startrek: more.startrek || null,
         formats: formats.length ? formats : null,
         frequency: frequency || null,
