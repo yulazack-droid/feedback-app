@@ -8,12 +8,13 @@ import {
   insertLectureFeedback, insertFinalFeedback, insertProjectFeedback,
   fetchLectureFeedback, fetchFinalFeedback, fetchProjectFeedback,
   fetchReportNotes, saveReportNotesRemote,
+  insertMidyearFeedback, fetchMidyearFeedback,
 } from './supabase.js';
 
 // Onsite context — from the opening keynote deck
 const DECK_URL = 'https://communitysummit2026.netlify.app/';
 const ONSITE_GOALS = [
-  { title: "A toolkit you'll actually open on Monday", text: "Not theory. Real tools, real workflows, real prompts you can use the moment you get back to your game." },
+  { title: "A toolkit you'll actually open on Monday", text: "Not theory. Real toolשs, real workflows, real prompts you can use the moment you get back to your game." },
   { title: 'Permission to think bigger than your brief', text: 'No "but my game is different." No invisible ceiling. The ideas that scared you yesterday become the ones you ship next month.' },
   { title: 'Hunger to become the new generation of CMs', text: 'Who hunts, not waits. Builds, not executes. Owns, not manages — always eager for the next challenge.' },
 ];
@@ -22,16 +23,52 @@ const ONSITE_AGENDA = [
     { time: '10:00', name: 'So Why Are We All Here? — Goals & Welcome' },
     { time: '10:30', name: "Trends School: No, You Can't Skip This One" },
     { time: '11:00', name: 'Spot the Trend — workshop' },
+    { time: '11:30', name: 'Survival Break', brk: true },
     { time: '11:45', name: 'Steal Like a CM — Adapting Trends' },
-    { time: '12:15', name: 'AI Workshop' },
+    { time: '12:15', name: 'AI Workshop — Part 1' },
+    { time: '13:15', name: 'Socialunch', brk: true },
+    { time: '14:15', name: 'AI Workshop — Part 2' },
+    { time: '15:15', name: 'DIY AI — Practice Round' },
+    { time: '16:00', name: 'Drinks & Cookies', brk: true },
     { time: '16:30', name: "Meet Your New Intern — It's an AI" },
+    { time: '17:00', name: 'La Finito' },
   ]},
   { day: 2, theme: 'Creators · Data · Build', items: [
     { time: '10:00', name: 'TikTok or Flop: Making Your Game Go Viral' },
     { time: '10:45', name: 'How the Pros Do It — Lessons from Supercell' },
+    { time: '11:30', name: 'Survival Break', brk: true },
     { time: '11:45', name: "Numbers Don't Lie — KPIs & Storytelling" },
+    { time: '12:45', name: 'Chew & Chat — Lunch but Make it Social', brk: true },
     { time: '13:45', name: 'Project Time — Take What You Learned & Make It Real' },
+    { time: '16:00', name: 'Recharge Break', brk: true },
+    { time: '16:15', name: 'Show & Tell — Game Teams Present' },
+    { time: '17:00', name: 'Grand Finale' },
   ]},
+];
+
+// Mid-year review sessions — for the follow-up survey
+const MIDYEAR_SESSIONS = [
+  { key: 'across',   title: 'Across the industry',        speaker: 'Rachel Blennerhassett', group: 'sessions' },
+  { key: 'ai',       title: 'AI workshop',                speaker: 'Daniel Geron',          group: 'sessions' },
+  { key: 'bingo',    title: 'Bingo',                      speaker: null,                    group: 'stories'  },
+  { key: 'scrabble', title: 'Scrabble',                   speaker: null,                    group: 'stories'  },
+  { key: 'stumble',  title: 'Stumble Guys',               speaker: null,                    group: 'stories'  },
+  { key: 'yahtzee',  title: 'Yahtzee',                    speaker: null,                    group: 'stories'  },
+  { key: 'startrek', title: 'Star Trek Fleet Command',    speaker: null,                    group: 'stories'  },
+];
+
+const MIDYEAR_FORMATS = [
+  'Sessions like today',
+  'Regular newsletter',
+  'Active Slack channel',
+  'Peer coffee chats / 1:1s',
+  'Something else',
+];
+
+const MIDYEAR_FREQ_OPTIONS = [
+  { key: 'monthly', label: 'Monthly' },
+  { key: '2-3mo',   label: 'Every 2-3 months' },
+  { key: 'twice',   label: 'Twice a year' },
 ];
 
 const LECTURES = [
@@ -69,6 +106,7 @@ function parseHash() {
   if (h.startsWith('l/'))  return { route: 'lecture', lectureId: decodeURIComponent(h.slice(2)) };
   if (h === 'final')       return { route: 'final' };
   if (h === 'admin')       return { route: 'admin' };
+  if (h === 'mid-year')    return { route: 'midyear' };
   return { route: 'home' };
 }
 
@@ -107,6 +145,20 @@ const STYLES = `
   .check-row { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1.5px solid var(--ink); margin-bottom: 8px; cursor: pointer; transition: all 0.12s ease; background: var(--cream); user-select: none; }
   .check-row:hover { background: var(--cream-2); }
   .check-row.active { background: var(--ink); color: var(--cream); }
+  /* Mid-year survey — high-contrast buttons */
+  .my-emoji-btn { flex: 1; border: 1.5px solid var(--ink); background: #ffffff; cursor: pointer; padding: 10px 0; font-size: 22px; transition: all 0.15s ease; display: flex; align-items: center; justify-content: center; }
+  .my-emoji-btn:hover { background: var(--cream-2); }
+  .my-emoji-btn.active { border: 3px solid var(--scopely-dark); background: #e6f1fb; padding: 8px 0; }
+  .my-choice-btn { flex: 1; border: 1.5px solid var(--ink); background: #ffffff; color: var(--ink); font-weight: 700; padding: 9px 0; font-size: 13px; cursor: pointer; transition: all 0.15s ease; }
+  .my-choice-btn:hover { background: var(--cream-2); }
+  .my-choice-btn.active-yes { border: 3px solid #2d5f2b; background: #e7f0e0; color: var(--ink); padding: 7px 0; }
+  .my-choice-btn.active-maybe { border: 3px solid #b08968; background: #f5eddf; color: var(--ink); padding: 7px 0; }
+  .my-choice-btn.active-no { border: 3px solid #8b2e1b; background: #fbe6e0; color: var(--ink); padding: 7px 0; }
+  .my-checkbox-row { display: block; padding: 10px 14px; border: 1.5px solid var(--ink); background: #ffffff; color: var(--ink); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.15s ease; margin-bottom: 6px; }
+  .my-checkbox-row:hover { background: var(--cream-2); }
+  .my-checkbox-row.active { border: 3px solid var(--scopely-dark); background: #e6f1fb; color: var(--ink); padding: 8px 12px; }
+  .my-card { background: var(--cream); border: 1.5px solid var(--ink); padding: 16px; margin-bottom: 12px; }
+  .my-section-label { font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase; color: var(--ink-soft); font-weight: 700; margin: 22px 0 10px; display: block; }
   .qr-wrap { background: var(--cream); border: 1.5px solid var(--ink); padding: 18px; display: inline-block; box-shadow: 8px 8px 0 var(--scopely); }
   .stat { border: 1.5px solid var(--ink); padding: 16px; background: var(--cream); }
   .stat-num { font-family: 'Frank Ruhl Libre', serif; font-size: 44px; font-weight: 900; line-height: 1; }
@@ -243,6 +295,7 @@ export default function App() {
     home: 'Host Console',
     lecture: 'Session feedback',
     final: 'Wrap-up survey',
+    midyear: 'Mid-year review',
     admin: 'Admin · Live results',
   }[hash.route];
   return (
@@ -254,6 +307,7 @@ export default function App() {
         {hash.route === 'lecture' && !isProject && <LecturePage lectureId={hash.lectureId} />}
         {hash.route === 'lecture' &&  isProject && <ProjectPage lecture={lectureForRoute} />}
         {hash.route === 'final'   && <FinalPage />}
+        {hash.route === 'midyear' && <MidyearPage />}
         {hash.route === 'admin'   && <AdminPage />}
       </div>
       <BrandFooter />
@@ -265,8 +319,9 @@ function HomePage() {
   const [selected, setSelected] = useState(LECTURES[0].id);
   const baseUrl = useMemo(() => window.location.href.split('#')[0], []);
   const isFinal = selected === '__final__';
-  const lecture = isFinal ? null : LECTURES.find(l => l.id === selected);
-  const url = isFinal ? `${baseUrl}#final` : `${baseUrl}#l/${selected}`;
+  const isMidyear = selected === '__midyear__';
+  const lecture = (isFinal || isMidyear) ? null : LECTURES.find(l => l.id === selected);
+  const url = isFinal ? `${baseUrl}#final` : isMidyear ? `${baseUrl}#mid-year` : `${baseUrl}#l/${selected}`;
   const [copied, setCopied] = useState(false);
   const copyLink = () => {
     navigator.clipboard?.writeText(url);
@@ -297,13 +352,27 @@ function HomePage() {
           <optgroup label="End of onsite">
             <option value="__final__">⭐ Wrap-up survey (full survey)</option>
           </optgroup>
+          <optgroup label="Follow-up meetings">
+            <option value="__midyear__">💙 Mid-year review survey</option>
+          </optgroup>
         </select>
         <div style={{ display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div className="qr-wrap" style={isFinal ? { boxShadow: '8px 8px 0 var(--accent-2)' } : {}}>
+          <div className="qr-wrap" style={isFinal ? { boxShadow: '8px 8px 0 var(--accent-2)' } : isMidyear ? { boxShadow: '8px 8px 0 var(--scopely)' } : {}}>
             <QRCanvas text={url} size={260} />
           </div>
           <div style={{ flex: 1, minWidth: 240 }}>
-            {isFinal ? (
+            {isMidyear ? (
+              <>
+                <span className="tag">Mid-year</span>
+                <span className="tag">Follow-up</span>
+                <h2 className="serif" style={{ fontSize: 22, marginTop: 10, fontWeight: 700, lineHeight: 1.3 }}>
+                  Mid-year review survey
+                </h2>
+                <p className="hand" style={{ fontSize: 22, marginTop: 6, color: 'var(--scopely)' }}>
+                  How did today land?
+                </p>
+              </>
+            ) : isFinal ? (
               <>
                 <span className="tag">Wrap-up</span>
                 <span className="tag">All sessions</span>
@@ -998,9 +1067,169 @@ function heatColor(value) {
   return '#8b2e1b';  // dark red for lowest scores (more readable than black)
 }
 
+// ============================================================
+// MID-YEAR REVIEW SURVEY PAGE
+// ============================================================
+function MidyearPage() {
+  // For each session key: rating (1-5) and more preference ('yes' | 'maybe' | 'no')
+  const [ratings, setRatings] = useState({});
+  const [more, setMore] = useState({});
+  // Looking ahead
+  const [formats, setFormats] = useState([]);
+  const [frequency, setFrequency] = useState('');
+  const [topics, setTopics] = useState('');
+  // Submit state
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState(null);
+
+  const setRating = (key, val) => setRatings({ ...ratings, [key]: val });
+  const setMoreFor = (key, val) => setMore({ ...more, [key]: val });
+  const toggleFormat = (fmt) => setFormats(formats.includes(fmt) ? formats.filter(f => f !== fmt) : [...formats, fmt]);
+
+  // Require at least the first two session ratings to enable submit
+  const requiredKeys = ['across', 'ai'];
+  const canSubmit = requiredKeys.every(k => ratings[k]);
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setSubmitting(true); setError(null);
+    try {
+      const row = {
+        rating_across: ratings.across || null, more_across: more.across || null,
+        rating_ai: ratings.ai || null, more_ai: more.ai || null,
+        rating_bingo: ratings.bingo || null, more_bingo: more.bingo || null,
+        rating_scrabble: ratings.scrabble || null, more_scrabble: more.scrabble || null,
+        rating_stumble: ratings.stumble || null, more_stumble: more.stumble || null,
+        rating_yahtzee: ratings.yahtzee || null, more_yahtzee: more.yahtzee || null,
+        rating_startrek: ratings.startrek || null, more_startrek: more.startrek || null,
+        formats: formats.length ? formats : null,
+        frequency: frequency || null,
+        topics: topics.trim() || null,
+      };
+      await insertMidyearFeedback(row);
+      setSubmitted(true);
+    } catch (e) {
+      console.error(e);
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (submitted) return (
+    <div className="card anim" style={{ textAlign: 'center', padding: 40, maxWidth: 480, margin: '40px auto' }}>
+      <div style={{ fontSize: 64, marginBottom: 12 }}>💙</div>
+      <h2 className="display" style={{ fontSize: 36, marginBottom: 10 }}>Thank you!</h2>
+      <p className="serif" style={{ fontSize: 18, color: 'var(--ink-soft)' }}>Your feedback shapes what comes next for this community.</p>
+    </div>
+  );
+
+  const EMOJIS = [
+    { v: 1, e: '😴' }, { v: 2, e: '😐' }, { v: 3, e: '🙂' }, { v: 4, e: '🤩' }, { v: 5, e: '🔥' },
+  ];
+
+  const renderSessionCard = (sess) => (
+    <div key={sess.key} className="my-card">
+      <h3 className="serif" style={{ fontSize: 20, fontWeight: 700, marginBottom: sess.speaker ? 2 : 10 }}>{sess.title}</h3>
+      {sess.speaker && <p className="hand" style={{ fontSize: 17, color: 'var(--ink)', marginBottom: 10 }}>{sess.speaker}</p>}
+      <div style={{ display: 'flex', gap: 5, marginBottom: 8 }}>
+        {EMOJIS.map(opt => (
+          <button key={opt.v}
+                  className={`my-emoji-btn ${ratings[sess.key] === opt.v ? 'active' : ''}`}
+                  onClick={() => setRating(sess.key, opt.v)}>{opt.e}</button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 5 }}>
+        <button className={`my-choice-btn ${more[sess.key] === 'yes' ? 'active-yes' : ''}`}
+                onClick={() => setMoreFor(sess.key, 'yes')}>
+          {more[sess.key] === 'yes' && '✓ '}Yes, more
+        </button>
+        <button className={`my-choice-btn ${more[sess.key] === 'maybe' ? 'active-maybe' : ''}`}
+                onClick={() => setMoreFor(sess.key, 'maybe')}>
+          {more[sess.key] === 'maybe' && '✓ '}Maybe
+        </button>
+        <button className={`my-choice-btn ${more[sess.key] === 'no' ? 'active-no' : ''}`}
+                onClick={() => setMoreFor(sess.key, 'no')}>
+          {more[sess.key] === 'no' && '✓ '}Not really
+        </button>
+      </div>
+    </div>
+  );
+
+  const sessions = MIDYEAR_SESSIONS.filter(s => s.group === 'sessions');
+  const stories = MIDYEAR_SESSIONS.filter(s => s.group === 'stories');
+
+  return (
+    <>
+      <div className="anim" style={{ textAlign: 'center', marginBottom: 24, paddingBottom: 16, borderBottom: '1.5px dashed var(--ink)' }}>
+        <span className="stamp">Community · Mid-year Review</span>
+        <h1 className="display" style={{ fontSize: 40, marginTop: 12, lineHeight: 1.15 }}>
+          How did today <span style={{ color: 'var(--accent)' }}>land?</span>
+        </h1>
+        <p className="hand" style={{ fontSize: 22, color: 'var(--accent)', marginTop: 6 }}>3 minutes, fully anonymous</p>
+      </div>
+
+      <span className="my-section-label">Sessions</span>
+      {sessions.map(renderSessionCard)}
+
+      <span className="my-section-label">Stories from the games</span>
+      {stories.map(renderSessionCard)}
+
+      <div className="anim" style={{ textAlign: 'center', margin: '32px 0 16px' }}>
+        <p className="eyebrow" style={{ color: 'var(--accent)' }}>Looking ahead</p>
+        <p className="hand" style={{ fontSize: 22, color: 'var(--accent)', marginTop: 4 }}>How should this group keep growing?</p>
+      </div>
+
+      <div className="my-card">
+        <p style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>Formats you'd value (pick any)</p>
+        {MIDYEAR_FORMATS.map(fmt => (
+          <div key={fmt}
+               className={`my-checkbox-row ${formats.includes(fmt) ? 'active' : ''}`}
+               onClick={() => toggleFormat(fmt)}>
+            {formats.includes(fmt) && '✓ '}{fmt}
+          </div>
+        ))}
+      </div>
+
+      <div className="my-card">
+        <p style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>How often would feel right?</p>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {MIDYEAR_FREQ_OPTIONS.map(opt => (
+            <button key={opt.key}
+                    className={`my-choice-btn ${frequency === opt.key ? 'active-yes' : ''}`}
+                    onClick={() => setFrequency(opt.key)}>
+              {frequency === opt.key && '✓ '}{opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="my-card">
+        <p style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Topics you'd love to see (optional)</p>
+        <textarea className="textarea"
+                  placeholder="More AI hands-on, competitor deep-dives, monetization tactics..."
+                  value={topics}
+                  onChange={e => setTopics(e.target.value)} />
+      </div>
+
+      {error && <p className="small" style={{ color: 'var(--accent)', marginBottom: 12 }}>{error}</p>}
+
+      <button className="btn anim" disabled={!canSubmit || submitting} onClick={submit} style={{ marginTop: 8 }}>
+        {submitting ? 'Saving...' : 'Submit feedback'}
+      </button>
+      {!canSubmit && !submitting && (
+        <p className="small" style={{ marginTop: 8, textAlign: 'center', color: 'var(--ink-soft)' }}>
+          Rate at least the first two sessions to submit
+        </p>
+      )}
+    </>
+  );
+}
+
 function AdminPage() {
   const [authed, setAuthed] = useState(false); const [pin, setPin] = useState('');
-  const [submissions, setSubmissions] = useState([]); const [finalSubs, setFinalSubs] = useState([]); const [projectSubs, setProjectSubs] = useState([]);
+  const [submissions, setSubmissions] = useState([]); const [finalSubs, setFinalSubs] = useState([]); const [projectSubs, setProjectSubs] = useState([]); const [midyearSubs, setMidyearSubs] = useState([]);
   const [loading, setLoading] = useState(false); const [filter, setFilter] = useState('all');
   const [lastRefresh, setLastRefresh] = useState(null);
   const [tab, setTab] = useState('overview'); // overview | session | voices | project
@@ -1020,8 +1249,10 @@ function AdminPage() {
   const refresh = async () => {
     setLoading(true);
     try {
-      const [subs, fins, projs] = await Promise.all([fetchLectureFeedback(), fetchFinalFeedback(), fetchProjectFeedback()]);
-      setSubmissions(subs); setFinalSubs(fins); setProjectSubs(projs);
+      const [subs, fins, projs, mids] = await Promise.all([
+        fetchLectureFeedback(), fetchFinalFeedback(), fetchProjectFeedback(), fetchMidyearFeedback()
+      ]);
+      setSubmissions(subs); setFinalSubs(fins); setProjectSubs(projs); setMidyearSubs(mids);
       setLastRefresh(new Date());
     } finally { setLoading(false); }
   };
@@ -1161,6 +1392,12 @@ function AdminPage() {
           <button className={`tab-btn ${tab === 'project' ? 'active' : ''}`} onClick={() => setTab('project')}>
             Project
             <span className="count">{projectSubs.length}</span>
+          </button>
+        )}
+        {midyearSubs.length > 0 && (
+          <button className={`tab-btn ${tab === 'midyear' ? 'active' : ''}`} onClick={() => setTab('midyear')}>
+            Mid-year
+            <span className="count">{midyearSubs.length}</span>
           </button>
         )}
       </div>
@@ -1443,9 +1680,9 @@ function AdminPage() {
                     Day {d.day} <span className="hand" style={{ fontSize: 18, color: 'var(--accent)' }}>· {d.theme}</span>
                   </p>
                   {d.items.map((item, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 14, padding: '5px 0', borderBottom: '1px dashed var(--cream-2)' }}>
-                      <span className="small" style={{ minWidth: 44, fontWeight: 700, color: 'var(--scopely)' }}>{item.time}</span>
-                      <span style={{ fontSize: 14 }}>{item.name}</span>
+                    <div key={i} style={{ display: 'flex', gap: 14, padding: '5px 0', borderBottom: '1px dashed var(--cream-2)', opacity: item.brk ? 0.5 : 1 }}>
+                      <span className="small" style={{ minWidth: 44, fontWeight: 700, color: item.brk ? 'var(--ink-soft)' : 'var(--scopely)' }}>{item.time}</span>
+                      <span style={{ fontSize: 14, fontStyle: item.brk ? 'italic' : 'normal' }}>{item.name}</span>
                     </div>
                   ))}
                 </div>
@@ -2066,6 +2303,131 @@ function AdminPage() {
           </div>
         );
       })()}
+      {/* === END PROJECT TAB === */}
+
+      {/* === MID-YEAR TAB === */}
+      {tab === 'midyear' && midyearSubs.length > 0 && (() => {
+        const total = midyearSubs.length;
+
+        // Per-session analytics
+        const sessionAnalytics = MIDYEAR_SESSIONS.map(sess => {
+          const ratings = midyearSubs.map(s => s[`rating_${sess.key}`]).filter(v => typeof v === 'number');
+          const avg = ratings.length ? +(ratings.reduce((a,b) => a+b, 0) / ratings.length).toFixed(2) : null;
+          const mores = midyearSubs.map(s => s[`more_${sess.key}`]).filter(Boolean);
+          const yes = mores.filter(m => m === 'yes').length;
+          const maybe = mores.filter(m => m === 'maybe').length;
+          const no = mores.filter(m => m === 'no').length;
+          return { ...sess, avg, count: ratings.length, yes, maybe, no, moreTotal: mores.length };
+        });
+
+        // Formats
+        const formatCounts = {};
+        for (const s of midyearSubs) for (const f of (s.formats || [])) formatCounts[f] = (formatCounts[f] || 0) + 1;
+        const formatChart = Object.entries(formatCounts)
+          .map(([format, count]) => ({ format, count }))
+          .sort((a,b) => b.count - a.count);
+
+        // Frequency
+        const freqCounts = {};
+        for (const s of midyearSubs) if (s.frequency) freqCounts[s.frequency] = (freqCounts[s.frequency] || 0) + 1;
+        const freqLabels = { monthly: 'Monthly', '2-3mo': 'Every 2-3 months', twice: 'Twice a year' };
+        const freqChart = ['monthly', '2-3mo', 'twice']
+          .filter(k => freqCounts[k])
+          .map(k => ({ label: freqLabels[k], count: freqCounts[k] }));
+
+        // Topics
+        const topics = midyearSubs.filter(s => s.topics);
+
+        return (
+          <div className="card anim" style={{ marginBottom: 24 }}>
+            <span className="eyebrow">Mid-year review · deep dive</span>
+            <h3 className="serif" style={{ fontSize: 22, marginTop: 6, marginBottom: 16, fontWeight: 700 }}>How did the mid-year land?</h3>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10, marginBottom: 20 }}>
+              <div className="stat"><span className="eyebrow">Responses</span><div className="stat-num">{total}</div></div>
+            </div>
+
+            {/* Session rankings */}
+            <span className="eyebrow">Sessions ranked by average rating</span>
+            <div style={{ marginTop: 10, marginBottom: 20 }}>
+              {sessionAnalytics.slice().sort((a,b) => (b.avg || 0) - (a.avg || 0)).map(sess => (
+                <div key={sess.key} style={{ padding: '12px 8px', borderBottom: '1px dashed var(--ink)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                    <div>
+                      <span className="serif" style={{ fontSize: 16, fontWeight: 700 }}>{sess.title}</span>
+                      {sess.speaker && <p className="hand" style={{ fontSize: 16, color: 'var(--ink)' }}>{sess.speaker}</p>}
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div className="stat-num" style={{ fontSize: 24, color: 'var(--ink)' }}>{sess.avg || '–'}</div>
+                      <span className="small">{sess.count} ratings</span>
+                    </div>
+                  </div>
+                  {sess.moreTotal > 0 && (
+                    <div style={{ display: 'flex', gap: 4, fontSize: 12, marginTop: 6 }}>
+                      <div style={{ flex: sess.yes || 0.01, background: '#e7f0e0', color: 'var(--ink)', padding: '4px 8px', textAlign: 'center', fontWeight: 700, minWidth: 0 }}>
+                        {sess.yes > 0 && `Yes ${sess.yes}`}
+                      </div>
+                      <div style={{ flex: sess.maybe || 0.01, background: '#f5eddf', color: 'var(--ink)', padding: '4px 8px', textAlign: 'center', fontWeight: 700, minWidth: 0 }}>
+                        {sess.maybe > 0 && `Maybe ${sess.maybe}`}
+                      </div>
+                      <div style={{ flex: sess.no || 0.01, background: '#fbe6e0', color: 'var(--ink)', padding: '4px 8px', textAlign: 'center', fontWeight: 700, minWidth: 0 }}>
+                        {sess.no > 0 && `No ${sess.no}`}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Formats */}
+            {formatChart.length > 0 && (
+              <div className="chart-card">
+                <div className="chart-title">Preferred formats for keeping the community growing</div>
+                <ResponsiveContainer width="100%" height={Math.max(160, formatChart.length * 44)}>
+                  <BarChart data={formatChart} layout="vertical" margin={{ top: 5, right: 30, left: 160, bottom: 5 }}>
+                    <CartesianGrid stroke="#1a1715" strokeOpacity={0.1} horizontal={false} />
+                    <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: '#4a423c' }} />
+                    <YAxis dataKey="format" type="category" tick={<WrappedTick width={155} />} width={165} />
+                    <Tooltip content={<NewsprintTooltip />} cursor={{ fill: '#ebe1cf' }} />
+                    <Bar dataKey="count" fill="#1e90ff" radius={[0,3,3,0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Frequency */}
+            {freqChart.length > 0 && (
+              <div className="chart-card">
+                <div className="chart-title">How often would feel right</div>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={freqChart} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                    <CartesianGrid stroke="#1a1715" strokeOpacity={0.1} vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#4a423c' }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#4a423c' }} />
+                    <Tooltip content={<NewsprintTooltip />} cursor={{ fill: '#ebe1cf' }} />
+                    <Bar dataKey="count" fill="#588157" radius={[3,3,0,0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Topics free text */}
+            {topics.length > 0 && (
+              <>
+                <span className="eyebrow">Topics they'd love to see</span>
+                <div style={{ marginTop: 10 }}>
+                  {topics.map((s, i) => (
+                    <div key={i} className="quote-card" style={{ borderLeftColor: 'var(--scopely)' }}>
+                      <p style={{ fontSize: 15 }}>{s.topics}</p>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })()}
+      {/* === END MID-YEAR TAB === */}
     </>
   );
 }
